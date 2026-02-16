@@ -1,0 +1,83 @@
+root_dir: "/media/data/helena/experiments_cataract/"
+experiment_name: "numbers_v1.0_test"
+
+model:
+  name: hierarchical
+  num_classes: 99
+  size: 64
+  backbone:
+    target: models.small_cnn.JerseyCNN
+    params:
+      in_channels: 3
+      layers: [32, 64, 128, 192]
+      dropout: 0.5
+      width: 1.0
+
+dataset:
+  train:
+    name: "frame_by_frame_tracklet"
+    params:
+      root: "/media/data/numbers/dataset_numbers_verified_v1_by_tracklet/train/"
+      max_side: 64    
+    loader_params:
+      batch_size: 128
+      shuffle: True
+      num_workers: 8
+    transforms:
+      brightness:
+        target: albumentations.RandomBrightnessContrast
+        params:
+          brightness_limit: 0.1
+          contrast_limit: 0.1
+          p: 0.1
+      jitter:
+        target: albumentations.ColorJitter
+        params:
+          brightness: 0.1
+          contrast: 0.1
+          saturation: 0.1
+          hue: 0.1
+          p: 0.1
+
+  val:
+    name: "frame_by_frame_tracklet"
+    params:
+      root: "/media/data/numbers/dataset_numbers_verified_v1_by_tracklet/val/"
+      max_side: 64
+    loader_params:
+      batch_size: 512
+      shuffle: False
+      num_workers: 8
+
+
+loss:
+  target: losses.frame_by_frame_tracklet_loss.FrameByFrameTrackletLoss
+  params:
+    num_classes: 99
+
+optimizer:
+  target: torch.optim.AdamW
+  params:
+    lr: 1e-3
+
+lr_scheduler:
+  target: utils.lr_scheduler.get_linear_warmup_lr_scheduler
+  params:
+    n_warmup_steps: 50
+
+
+visualizer:
+  row: 6
+  col: 10
+  num_batch_to_take: 3
+  num_classes: 99
+  hierarchical: True
+
+train:
+  epochs: 2
+  device: "cuda:1"
+  use_amp: True
+  max_norm: 1.0
+  log_every_n_steps: 10
+  val_every_n_epoch: 1
+  log_image_every_n_epoch: 1
