@@ -146,15 +146,26 @@ def main():
         help="Target FPS for frame extraction (default=5)"
     )
 
+    parser.add_argument(
+        "--single_folder",
+        type=str,
+        default=None,
+        help="Process only one specific folder"
+    )
+
     args = parser.parse_args()
 
     dataset_path = args.dataset_path
     fps_target = args.fps
 
-    for folder in os.listdir(dataset_path):
-        folder_path = os.path.join(dataset_path, folder)
-        if os.path.isdir(folder_path):
-            process_folder(folder_path, fps_target)
-    
+    if args.single_folder:
+        folder_path = os.path.join(dataset_path, args.single_folder)
+        process_folder(folder_path, fps_target)
+    else:
+        for folder in os.listdir(dataset_path):
+            folder_path = os.path.join(dataset_path, folder)
+            if os.path.isdir(folder_path):
+                process_folder(folder_path, fps_target)
+
 if __name__ == "__main__":
     main()
