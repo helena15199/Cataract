@@ -28,16 +28,16 @@ python extract_frame_video.py \
     --dataset_path /path/to/dataset_raw \
     --fps 5
 ```
-Arguments
---dataset_path : root folder containing raw videos (each video in a separate folder)
---fps : target FPS for frame extraction (default: 5)
---single_folder	(optional): process only this folder
+Arguments :
+- --dataset_path : root folder containing raw videos (each video in a separate folder)
+- --fps : target FPS for frame extraction (default: 5)
+- --single_folder (optional) : process only this folder
 
 ## Step 2 — Phase-Aware Dataset Split
 
 To create the final dataset, two scripts can be used depending on whether you want a non-temporal or temporal organization of your data.
 
-1) Temporal Model (split_temporal.py)
+### Temporal Model (split_temporal.py)
 
 This script prepares a dataset for models that use temporal sequences (video-level models):
 
@@ -50,7 +50,7 @@ This script prepares a dataset for models that use temporal sequences (video-lev
 You can run this :
 
 ```bash
-python create_split_model_temporal.py \
+python split_temporal.py \
     --source_dir /path/to/extracted_frames \
     --dest_dir /path/to/dataset_cataract_temporal \
     --ratio_split 0.8 0.1 0.1 \
@@ -69,7 +69,7 @@ dataset_cataract_temporal/
 └── test/
 ```
 
-2) Non-Temporal Model (split_non_temporal.py)
+### Non-Temporal Model (split_non_temporal.py)
 
 This script prepares a dataset for frame-level models, where each frame is treated independently:
 
@@ -80,11 +80,10 @@ This script prepares a dataset for frame-level models, where each frame is treat
 You can run this :
 
 ```bash
-python create_split_model_non_temporal.py \
+python split_non_temporal.py \
     --source_dir /path/to/extracted_frames \
     --dest_dir /path/to/dataset_cataract \
     --ratio_split 0.8 0.1 0.1 \
-    --use_symlink
 ```
 After running, the folder structure looks like this:
 
