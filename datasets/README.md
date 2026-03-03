@@ -4,25 +4,13 @@ This repository provides a complete pipeline to:
 
 1. Extract frames from cataract surgery videos using VIA annotations  
 2. Organize extracted frames by surgical phase  
-3. Create a phase-aware train / validation / test split  
+3. Create a phase-aware train / validation / test split for temporal and non temporal models 
 
 ---
-
-# Dataset Preparation Workflow
 
 ## Step 0 — Folder Structure
 
 Your raw videos must be organized as:
-
-
-dataset_raw/
-├── Video_01/
-│ ├── surgery.mp4
-│ └── surgery.json
-├── Video_02/
-│ ├── surgery.mp4
-│ └── surgery.json
-
 
 - Each folder contains **one video** and its **VIA JSON annotations**.  
 - The JSON must include:  
@@ -30,86 +18,87 @@ dataset_raw/
   - `av["1"] = phase_name`  
   - `vid = video_id`  
 
----
 
 ## Step 1 — Frame Extraction
 
-1) Objective
-
-Extract frames at a target FPS (default 5 FPS) and automatically organize them by surgical phase.
-
-2) Command
+Here the goal is to extract frames at a target FPS (default 5 FPS) and automatically organize them by surgical phase.
 
 ```bash
 python extract_frame_video.py \
     --dataset_path /path/to/dataset_raw \
     --fps 5
-
-Argument	Description
---dataset_path	Root folder containing raw videos (each video in a separate folder)
---fps	Target FPS for frame extraction (default: 5)
---single_folder	Optional. Process only this folder
-
-Output structure:
-
-dataset_raw/
-└── Video_01/
-    ├── Incision/
-    ├── Rhexis/
-    ├── Phacoemulsification/
-
-### Step 2 — Phase-Aware Dataset Split
-
-This script creates a train/validation/test dataset from videos annotated by surgical phase, ensuring balanced phase representation. Files can be copied or symlinked.
-
-Features
-
-Detects surgeon level from video name: senior, junior, consultant
-
-Extracts phases from video subfolders
-
-Builds video → phases and phase → videos mappings
-
-Splits dataset intelligently per phase with configurable ratios
-
-Creates folder structure and populates dataset
-
-Prints split stats: number of videos, expertise distribution, phase distribution
-
-Usage
-python dataset_splitter.py \
-    --source_dir /path/to/videos \
-    --dest_dir /path/to/dataset \
-    --seed 42 \
-    --use_symlink \
-    --ratio_split 0.8 0.1 0.1
+```
 Arguments
-Argument	Type	Default	Description
---source_dir	str	required	Source folder containing videos with phase subfolders
---dest_dir	str	required	Destination folder for the dataset
---seed	int	42	Random seed for reproducibility
---use_symlink	flag	False	Use symlinks instead of copying files
---ratio_split	float float float	0.8 0.1 0.1	Train/Val/Test split ratios (sum=1.0)
-Example Structure
+--dataset_path : root folder containing raw videos (each video in a separate folder)
+--fps : target FPS for frame extraction (default: 5)
+--single_folder	(optional): process only this folder
 
-Before:
+## Step 2 — Phase-Aware Dataset Split
 
-videos/
-├─ VR_Senior_Fellow_01/
-│  ├─ Incision/
-│  └─ Phacoemulsification/
-├─ VR_junior_Fellow_02/
-│  ├─ Incision/
-│  └─ Lens_Implant/
+To create the final dataset, two scripts can be used depending on whether you want a non-temporal or temporal organization of your data.
 
-After:
+1) Temporal Model (split_temporal.py)
 
-dataset/
-├─ train/Incision/
-├─ train/Phacoemulsification/
-├─ val/Incision/
-├─ test/Lens_Implant/
+This script prepares a dataset for models that use temporal sequences (video-level models):
 
-Files are renamed as:
+- Video-level structure: each video’s frames are kept in order in the same folder, preserving the temporal sequence.
 
-<video_name>_<original_file>
+- Phase-aware splitting: ensures all surgical phases are represented in train, val, and test.
+
+- Labels: a labels.json file is automatically created to assign a surgical phase label to each frame.
+
+You can run this :
+
+```bash
+python create_split_model_temporal.py \
+    --source_dir /path/to/extracted_frames \
+    --dest_dir /path/to/dataset_cataract_temporal \
+    --ratio_split 0.8 0.1 0.1 \
+```
+After running, the folder structure looks like this:
+
+```
+dataset_cataract_temporal/
+├── train/
+│   ├── Video_01/
+│   │   ├── Frame_0001.jpg
+│   │   ├── Frame_0002.jpg
+│   │   └── ...
+│   └── ...
+├── val/
+└── test/
+```
+
+2) Non-Temporal Model (split_non_temporal.py)
+
+This script prepares a dataset for frame-level models, where each frame is treated independently:
+
+- Phase-aware splitting: assigns videos to train, val, and test sets, ensuring balanced representation of all surgical phases.
+
+- Flattened structure: within each split, frames are copied into folders by phase.
+
+You can run this :
+
+```bash
+python create_split_model_non_temporal.py \
+    --source_dir /path/to/extracted_frames \
+    --dest_dir /path/to/dataset_cataract \
+    --ratio_split 0.8 0.1 0.1 \
+    --use_symlink
+```
+After running, the folder structure looks like this:
+
+```
+dataset_cataract/
+├── train/
+│   ├── Incision/
+│   │   ├── Video_01_Frame_0001.jpg
+│   │   ├── Video_01_Frame_0002.jpg
+│   │   └── ...
+│   └── ...
+├── val/
+└── test/
+```
+--- 
+
+Both scripts also print a summary of the dataset with the number of videos per split, the distribution of surgeon expertise (senior, junior, consultant) and the phase distribution across splits.
