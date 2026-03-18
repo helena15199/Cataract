@@ -8,15 +8,43 @@ from collections import defaultdict, Counter
 from tqdm import tqdm
 import pandas as pd
 
-def extract_level(video_name: str) -> str:
-    if "VR_Senior_Fellow" in video_name:
-        return "senior"
-    elif "VR_junior_Fellow" in video_name:
-        return "junior"
-    elif "VR_Consultant" in video_name:
-        return "consultant"
-    else:
-        return "unknown"
+
+def build_grading_mapping(grading_root):
+    """
+    Scan grading_1, grading_2, grading_3, grading_4 folders
+    and build a mapping: normalized mp4_name -> grading level (str)
+    ex: {"video22": "1", "video55": "3", ...}
+    """
+    mapping = {}
+    for folder in os.listdir(grading_root):
+        folder_path = os.path.join(grading_root, folder)
+        if not os.path.isdir(folder_path):
+            continue
+
+        match = re.search(r'(\d+)', folder)
+        if not match:
+            continue
+        level = match.group(1)
+
+        for f in os.listdir(folder_path):
+            if f.endswith(".mp4"):
+                name = os.path.splitext(f)[0].lower().replace(" ", "").replace("_", "")
+                mapping[name] = level
+
+    return mapping
+
+
+def extract_level(video_name, grading_mapping):
+    """
+    Find the grading level of a video by matching its name
+    against the grading mapping.
+    """
+    normalized = video_name.lower().replace(" ", "").replace("_", "")
+    for key, level in grading_mapping.items():
+        if key in normalized or normalized in key:
+            return level
+    return "unknown"
+
 
 def extract_phases(video_path):
     return [
@@ -24,12 +52,12 @@ def extract_phases(video_path):
         if os.path.isdir(os.path.join(video_path, item))
     ]
 
+
 def build_video_phase_mapping(source_dir):
     video_phases = {}
     phase_to_videos = defaultdict(list)
 
     for video in tqdm(os.listdir(source_dir), desc="Scanning videos"):
-
         video_path = os.path.join(source_dir, video)
 
         if not os.path.isdir(video_path):
@@ -103,7 +131,6 @@ def smart_split(video_phases, phase_to_videos, seed, ratios):
 
 
 def create_structure(dest_dir, split):
-
     for split_name in split.keys():
         split_path = os.path.join(dest_dir, split_name)
         os.makedirs(split_path, exist_ok=True)
@@ -116,7 +143,6 @@ def populate_dataset_flat(source_dir, dest_dir, split):
     for split_name, videos in split.items():
 
         print(f"\nProcessing {split_name} set")
-
         split_dir = os.path.join(dest_dir, split_name)
 
         for video in tqdm(videos, desc=f"{split_name} videos"):
@@ -144,16 +170,14 @@ def populate_dataset_flat(source_dir, dest_dir, split):
                         continue
 
                     dst_file = os.path.join(dest_video_dir, file)
-
                     shutil.copy2(src_file, dst_file)
 
-                    # Save label mapping
                     labels_dict[f"{split_name}/{video}/{file}"] = phase
 
     return labels_dict
 
-def save_labels_json(dest_dir, labels_dict):
 
+def save_labels_json(dest_dir, labels_dict):
     json_path = os.path.join(dest_dir, "labels.json")
     with open(json_path, "w") as f:
         json.dump(labels_dict, f, indent=4)
@@ -161,39 +185,33 @@ def save_labels_json(dest_dir, labels_dict):
 
 
 def save_labels_excel(dest_dir, labels_dict):
-
     df = pd.DataFrame(
         [(k, v) for k, v in labels_dict.items()],
         columns=["image_path", "phase"]
     )
-
     excel_path = os.path.join(dest_dir, "labels.xlsx")
     df.to_excel(excel_path, index=False)
-
     print(f"Labels saved to {excel_path}")
 
 
-def analyze_split(split, video_phases):
+def analyze_split(split, video_phases, grading_mapping):
 
     print("\n===== SPLIT SIZE =====")
     for s in split:
         print(f"{s}: {len(split[s])} videos")
 
-    print("\n===== EXPERTISE DISTRIBUTION =====")
-
+    print("\n===== GRADING DISTRIBUTION =====")
     for s in split:
-        levels = [extract_level(v) for v in split[s]]
+        levels = [extract_level(v, grading_mapping) for v in split[s]]
         print(f"\n{s.upper()}")
         print(Counter(levels))
 
     print("\n===== PHASE DISTRIBUTION PER SPLIT =====")
-
     phase_distribution = {
         "train": Counter(),
         "val": Counter(),
         "test": Counter()
     }
-
     for split_name in split:
         for v in split[split_name]:
             for phase in video_phases[v]:
@@ -203,20 +221,26 @@ def analyze_split(split, video_phases):
         print(f"\n{split_name.upper()} PHASES:")
         print(phase_distribution[split_name])
 
+
 def main():
 
     parser = argparse.ArgumentParser(
         description="Build flat video-level phase classification dataset"
     )
 
-    parser.add_argument("--source_dir", type=str, default='/home/helena/UCL_video_cataract/videos_matching_json_with_extracted_frames')
-    parser.add_argument("--dest_dir", type=str, default='/home/helena/UCL_video_cataract/dataset_cataract_temporal')
+    parser.add_argument("--source_dir", type=str, required=True,
+                        help="Folder containing video subfolders with extracted frames")
+    parser.add_argument("--dest_dir", type=str, required=True,
+                        help="Destination dataset directory")
+    parser.add_argument("--grading_dir", type=str, required=True,
+                        help="Folder containing grading_1, grading_2, grading_3, grading_4 subfolders")
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--ratio_split", type=float, nargs=3,
-                        default=[0.8, 0.1, 0.1])
+    parser.add_argument("--ratio_split", type=float, nargs=3, default=[0.8, 0.1, 0.1])
     parser.add_argument("--save_excel", action="store_true")
 
     args = parser.parse_args()
+
+    grading_mapping = build_grading_mapping(args.grading_dir)
 
     video_phases, phase_to_videos = build_video_phase_mapping(args.source_dir)
 
@@ -226,6 +250,7 @@ def main():
         args.seed,
         args.ratio_split
     )
+
     create_structure(args.dest_dir, split)
 
     labels_dict = populate_dataset_flat(
@@ -241,7 +266,7 @@ def main():
         save_labels_excel(args.dest_dir, labels_dict)
 
     print("Analyzing split")
-    analyze_split(split, video_phases)
+    analyze_split(split, video_phases, grading_mapping)
 
     print("\nDataset successfully created!")
 
