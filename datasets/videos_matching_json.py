@@ -2,9 +2,7 @@ import os
 import shutil
 import argparse
 
-
 VIDEO_EXT = [".mp4", ".avi", ".mov", ".mkv"]
-
 
 def normalize(name):
     """Normalize filename to make matching robust."""

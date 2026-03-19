@@ -1,0 +1,9 @@
+einops
+loguru
+numpy
+torch
+tqdm
+tensorboard
+pathspec
+opencv-python
+omegaconf

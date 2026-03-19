@@ -1,27 +1,21 @@
-root_dir: "/media/data/helena/experiments_cataract/"
-experiment_name: "numbers_v1.0_test"
+root_dir: "/home/helena/experiments_cataract/"
+experiment_name: "cataract_v1.0"
 
 model:
-  name: hierarchical
-  num_classes: 99
-  size: 64
+  name: simple
+  num_classes: 17
   backbone:
-    target: models.small_cnn.JerseyCNN
-    params:
-      in_channels: 3
-      layers: [32, 64, 128, 192]
-      dropout: 0.5
-      width: 1.0
+    name: resnet50
+    freeze: false
 
 dataset:
   train:
-    name: "frame_by_frame_tracklet"
     params:
-      root: "/media/data/numbers/dataset_numbers_verified_v1_by_tracklet/train/"
-      max_side: 64    
+      root: "/home/helena/UCL_video_cataract/dataset_temporal/train/"
+      max_side: 224
     loader_params:
-      batch_size: 128
-      shuffle: True
+      batch_size: 64
+      shuffle: true
       num_workers: 8
     transforms:
       brightness:
@@ -40,43 +34,44 @@ dataset:
           p: 0.1
 
   val:
-    name: "frame_by_frame_tracklet"
     params:
-      root: "/media/data/numbers/dataset_numbers_verified_v1_by_tracklet/val/"
-      max_side: 64
+      root: "/home/helena/UCL_video_cataract/dataset_temporal/val/"
+      max_side: 224
     loader_params:
-      batch_size: 512
-      shuffle: False
+      batch_size: 128
+      shuffle: false
       num_workers: 8
 
-
 loss:
-  target: losses.frame_by_frame_tracklet_loss.FrameByFrameTrackletLoss
+  target: losses.cataract_loss.CataractLoss
   params:
-    num_classes: 99
+    label_smoothing: 0.0
 
 optimizer:
   target: torch.optim.AdamW
   params:
-    lr: 1e-3
+    lr: 1e-4
 
 lr_scheduler:
   target: utils.lr_scheduler.get_linear_warmup_lr_scheduler
   params:
     n_warmup_steps: 50
 
-
 visualizer:
-  row: 6
-  col: 10
-  num_batch_to_take: 3
-  num_classes: 99
-  hierarchical: True
+  row: 4
+  col: 8
+  num_batch_to_take: 2
+  class_names: [
+    "phase_0", "phase_1", "phase_2", "phase_3", "phase_4",
+    "phase_5", "phase_6", "phase_7", "phase_8", "phase_9",
+    "phase_10", "phase_11", "phase_12", "phase_13", "phase_14",
+    "phase_15", "phase_16"
+  ]
 
 train:
-  epochs: 2
-  device: "cuda:1"
-  use_amp: True
+  epochs: 50
+  device: "cuda:0"
+  use_amp: true
   max_norm: 1.0
   log_every_n_steps: 10
   val_every_n_epoch: 1

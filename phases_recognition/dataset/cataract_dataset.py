@@ -32,24 +32,21 @@ def prepare_data(
     image_path: pathlib.Path,
     max_side: int = 64,
     transform_fn: Callable | None = None,
-    do_get_label: bool = True,
+    class_to_idx: dict | None = None,
 ):
-    label = -1
-    if do_get_label:
-        label = int(image_path.parent.name)
+    if class_to_idx is None:
+        raise ValueError("class_to_idx must be provided")
+    
+    label = class_to_idx[image_path.parent.name]
 
     image = basic_preprocess_image(str(image_path), max_side)
 
     if transform_fn is not None:
         image = transform_fn(image=image)["image"]
 
-    image = torch.from_numpy(image).float() / 255.0
     image = einops.rearrange(image, "h w c -> c h w")
 
-    label = torch.tensor(label, dtype=torch.long)
-
-    return image, label, str(image_path)
-
+    return image, torch.tensor(label, dtype=torch.long), str(image_path)
 
 class ImageNumbersDataset(torch_data.Dataset):
     def __init__(
@@ -67,6 +64,10 @@ class ImageNumbersDataset(torch_data.Dataset):
         self.all_path_images = list(self.root.glob("*/*.jpg"))
         random.Random(seed).shuffle(self.all_path_images)
 
+         # Mapping classe → index
+        class_names = sorted(set(p.parent.name for p in self.all_path_images))
+        self.class_to_idx = {name: idx for idx, name in enumerate(class_names)}
+
     def __len__(self) -> int:
         return len(self.all_path_images)
 
@@ -76,5 +77,6 @@ class ImageNumbersDataset(torch_data.Dataset):
             path,
             max_side=self.max_side,
             transform_fn=self.transform_fn,
+            class_to_idx=self.class_to_idx,
         )
         return image, label, path

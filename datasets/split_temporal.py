@@ -9,40 +9,40 @@ from tqdm import tqdm
 import pandas as pd
 
 
-def build_grading_mapping(grading_root):
+def load_grading_mapping(excel_path):
     """
-    Scan grading_1, grading_2, grading_3, grading_4 folders
-    and build a mapping: normalized mp4_name -> grading level (str)
-    ex: {"video22": "1", "video55": "3", ...}
+    Load grading from Excel column 'grading'.
+    Returns a mapping: video_number (int) -> grading (str)
+    ex: {1: "2", 22: "3", ...}
     """
+    df = pd.read_excel(excel_path)
     mapping = {}
-    for folder in os.listdir(grading_root):
-        folder_path = os.path.join(grading_root, folder)
-        if not os.path.isdir(folder_path):
+    for _, row in df.iterrows():
+        video_name = str(row["Videos"]).strip()
+        raw_grading = row["grading"]
+
+        if pd.isna(raw_grading):
             continue
 
-        match = re.search(r'(\d+)', folder)
+        match = re.search(r'\d+', video_name)
         if not match:
             continue
-        level = match.group(1)
 
-        for f in os.listdir(folder_path):
-            if f.endswith(".mp4"):
-                name = os.path.splitext(f)[0].lower().replace(" ", "").replace("_", "")
-                mapping[name] = level
+        video_number = int(match.group())
+        mapping[video_number] = str(int(float(raw_grading)))
 
     return mapping
 
 
 def extract_level(video_name, grading_mapping):
     """
-    Find the grading level of a video by matching its name
-    against the grading mapping.
+    Find grading level of a video folder by extracting its number.
+    'Video 22_json_Video 22' -> grading_mapping[22]
     """
-    normalized = video_name.lower().replace(" ", "").replace("_", "")
-    for key, level in grading_mapping.items():
-        if key in normalized or normalized in key:
-            return level
+    match = re.search(r'[Vv]ideo\s*(\d+)', video_name)
+    if match:
+        video_number = int(match.group(1))
+        return grading_mapping.get(video_number, "unknown")
     return "unknown"
 
 
@@ -232,15 +232,16 @@ def main():
                         help="Folder containing video subfolders with extracted frames")
     parser.add_argument("--dest_dir", type=str, required=True,
                         help="Destination dataset directory")
-    parser.add_argument("--grading_dir", type=str, required=True,
-                        help="Folder containing grading_1, grading_2, grading_3, grading_4 subfolders")
+    parser.add_argument("--excel_path", type=str, required=True,
+                        help="Excel file with video grading info")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--ratio_split", type=float, nargs=3, default=[0.8, 0.1, 0.1])
     parser.add_argument("--save_excel", action="store_true")
 
     args = parser.parse_args()
 
-    grading_mapping = build_grading_mapping(args.grading_dir)
+    # CHANGED: load grading from Excel instead of scanning grading folders
+    grading_mapping = load_grading_mapping(args.excel_path)
 
     video_phases, phase_to_videos = build_video_phase_mapping(args.source_dir)
 
