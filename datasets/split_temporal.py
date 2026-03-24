@@ -80,6 +80,7 @@ def extract_phases(video_path):
 def build_video_phase_mapping(source_dir):
     video_phases = {}
     phase_to_videos = defaultdict(list)
+    video_phase_frame_counts = defaultdict(lambda: defaultdict(int))
 
     for video in tqdm(os.listdir(source_dir), desc="Scanning videos"):
         video_path = os.path.join(source_dir, video)
@@ -92,15 +93,22 @@ def build_video_phase_mapping(source_dir):
         if not phases:
             continue
 
-        video_phases[video] = set(phases)
+        normalized_phases = {PHASE_MAP.get(p, p) for p in phases}
+        video_phases[video] = normalized_phases
 
-        for phase in phases:
+        for raw_phase in phases:
+            norm_phase = PHASE_MAP.get(raw_phase, raw_phase)
+            phase_path = os.path.join(video_path, raw_phase)
+            n_frames = len([f for f in os.listdir(phase_path) if os.path.isfile(os.path.join(phase_path, f))])
+            video_phase_frame_counts[video][norm_phase] += n_frames
+
+        for phase in normalized_phases:
             phase_to_videos[phase].append(video)
 
-    return video_phases, phase_to_videos
+    return video_phases, phase_to_videos, video_phase_frame_counts
 
 
-def smart_split(video_phases, phase_to_videos, seed, ratios):
+def smart_split(video_phases, phase_to_videos, video_phase_frame_counts, seed, ratios):
 
     random.seed(seed)
 
@@ -121,25 +129,24 @@ def smart_split(video_phases, phase_to_videos, seed, ratios):
         if not videos:
             continue
 
-        random.shuffle(videos)
         n = len(videos)
 
+        if n <= 3:
+            # Pour les phases rares, on met la vidéo avec le plus de frames en train
+            videos.sort(key=lambda v: video_phase_frame_counts[v][phase], reverse=True)
+        else:
+            random.shuffle(videos)
+
         if n == 1:
-            # Phase rare : toujours en train
             train.add(videos[0])
             used_videos.add(videos[0])
 
         elif n == 2:
-            # 1 train + 1 dans le plus petit de val/test pour équilibrer
             train.add(videos[0])
-            if len(val) <= len(test):
-                val.add(videos[1])
-            else:
-                test.add(videos[1])
+            test.add(videos[1])
             used_videos.update(videos)
 
         elif n == 3:
-            # 1 train + 1 val + 1 test
             train.add(videos[0])
             val.add(videos[1])
             test.add(videos[2])
@@ -161,6 +168,40 @@ def smart_split(video_phases, phase_to_videos, seed, ratios):
         "val": val,
         "test": test
     }
+
+
+def fix_missing_train_phases(split, video_phases, phase_to_videos, video_phase_frame_counts):
+    """
+    Après le split, vérifie que chaque phase a au moins une vidéo dans le train.
+    Si une phase est absente du train, déplace la vidéo avec le plus de frames
+    de val ou test vers train.
+    """
+    train_phases = set()
+    for v in split["train"]:
+        train_phases.update(video_phases[v])
+
+    missing = [p for p in phase_to_videos if p not in train_phases]
+    if missing:
+        print(f"\n⚠️  Phases absentes du train : {missing}")
+
+    for phase in missing:
+        moved = False
+        for src_split in ("val", "test"):
+            candidates = [v for v in phase_to_videos[phase] if v in split[src_split]]
+            if not candidates:
+                continue
+            candidates.sort(key=lambda v: video_phase_frame_counts[v][phase], reverse=True)
+            best = candidates[0]
+            split[src_split].remove(best)
+            split["train"].add(best)
+            n = video_phase_frame_counts[best][phase]
+            print(f"  → '{best}' déplacée de {src_split} → train (phase '{phase}', {n} frames)")
+            moved = True
+            break
+        if not moved:
+            print(f"  ✗ Impossible de corriger la phase '{phase}' (aucune vidéo trouvée)")
+
+    return split
 
 
 def create_structure(dest_dir, split):
@@ -279,14 +320,17 @@ def main():
     # CHANGED: load grading from Excel instead of scanning grading folders
     grading_mapping = load_grading_mapping(args.excel_path)
 
-    video_phases, phase_to_videos = build_video_phase_mapping(args.source_dir)
+    video_phases, phase_to_videos, video_phase_frame_counts = build_video_phase_mapping(args.source_dir)
 
     split = smart_split(
         video_phases,
         phase_to_videos,
+        video_phase_frame_counts,
         args.seed,
         args.ratio_split
     )
+
+    split = fix_missing_train_phases(split, video_phases, phase_to_videos, video_phase_frame_counts)
 
     create_structure(args.dest_dir, split)
 

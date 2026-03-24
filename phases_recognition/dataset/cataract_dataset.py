@@ -95,20 +95,59 @@ def build_transforms(transforms_config: DictConfig | dict | None) -> Callable | 
     return A.Compose(aug_list)
 
 
-def instantiate_dataloader(split_config: DictConfig | dict, class_names: list[str]) -> DataLoader:
+def build_weighted_sampler(dataset: ImageNumbersDataset) -> torch.utils.data.WeightedRandomSampler:
+    """Sampler qui équilibre les classes en sur-échantillonnant les rares."""
+    num_classes = len(dataset.class_to_idx)
+    counts = torch.zeros(num_classes)
+    for path in dataset.all_path_images:
+        rel_key = str(path.relative_to(dataset.root.parent)).replace("\\", "/")
+        phase = dataset.path_to_phase[rel_key]
+        counts[dataset.class_to_idx[phase]] += 1
+
+    class_weights = 1.0 / counts.clamp(min=1)
+    sample_weights = torch.tensor([
+        class_weights[dataset.class_to_idx[dataset.path_to_phase[
+            str(p.relative_to(dataset.root.parent)).replace("\\", "/")
+        ]]].item()
+        for p in dataset.all_path_images
+    ])
+    return torch.utils.data.WeightedRandomSampler(
+        weights=sample_weights,
+        num_samples=len(dataset),
+        replacement=True,
+    )
+
+
+def instantiate_dataloader(split_config: DictConfig | dict, class_names: list[str], use_sampler: bool = False) -> DataLoader:
     transform_fn = build_transforms(split_config.get("transforms"))
     dataset = ImageNumbersDataset(
         **split_config["params"],
         class_names=class_names,
         transform_fn=transform_fn,
     )
-    return DataLoader(dataset, **split_config["loader_params"])
+    loader_params = dict(split_config["loader_params"])
+    if use_sampler:
+        loader_params["sampler"] = build_weighted_sampler(dataset)
+        loader_params.pop("shuffle", None)  # shuffle et sampler sont incompatibles
+    return DataLoader(dataset, **loader_params)
+
+
+def compute_class_weights(dataset: ImageNumbersDataset) -> torch.Tensor:
+    """Retourne un tenseur de weights inversement proportionnel à la fréquence de chaque classe."""
+    num_classes = len(dataset.class_to_idx)
+    counts = torch.zeros(num_classes)
+    for path in dataset.all_path_images:
+        rel_key = str(path.relative_to(dataset.root.parent)).replace("\\", "/")
+        phase = dataset.path_to_phase[rel_key]
+        counts[dataset.class_to_idx[phase]] += 1
+    weights = counts.sum() / (num_classes * counts.clamp(min=1))
+    return weights
 
 
 def instantiate_loaders(
     dataset_dict: DictConfig | dict,
 ) -> tuple[DataLoader, DataLoader]:
     class_names = list(dataset_dict["class_names"])
-    train_loader = instantiate_dataloader(dataset_dict["train"], class_names)
-    val_loader = instantiate_dataloader(dataset_dict["val"], class_names)
+    train_loader = instantiate_dataloader(dataset_dict["train"], class_names, use_sampler=True)
+    val_loader = instantiate_dataloader(dataset_dict["val"], class_names, use_sampler=False)
     return train_loader, val_loader

@@ -6,6 +6,7 @@ from omegaconf import OmegaConf, DictConfig
 import torch
 
 from dataset import instantiate_loaders
+from dataset.cataract_dataset import compute_class_weights
 
 from utils.helpers import (
     instantiate_dirs,
@@ -33,9 +34,12 @@ def main(config: dict | DictConfig | OmegaConf):
     OmegaConf.save(config, pathlib.Path(log_dir).parent / "config.yaml")
 
     model = instantiate_model(config.model)
-    loss_fn: CataractLoss = instantiate_from_config(config.loss)
 
     train_loader, val_loader = instantiate_loaders(config.dataset)
+
+    class_weights = compute_class_weights(train_loader.dataset)
+    config.loss.params.weight = class_weights.tolist()
+    loss_fn: CataractLoss = instantiate_from_config(config.loss)
 
     optimizer: torch.optim.Optimizer = instantiate_from_config(
         config.optimizer, params=model.parameters()
