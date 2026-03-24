@@ -182,7 +182,7 @@ def fix_missing_train_phases(split, video_phases, phase_to_videos, video_phase_f
 
     missing = [p for p in phase_to_videos if p not in train_phases]
     if missing:
-        print(f"\n⚠️  Phases absentes du train : {missing}")
+        print(f"\n Phases absentes du train : {missing}")
 
     for phase in missing:
         moved = False
@@ -200,6 +200,37 @@ def fix_missing_train_phases(split, video_phases, phase_to_videos, video_phase_f
             break
         if not moved:
             print(f"  ✗ Impossible de corriger la phase '{phase}' (aucune vidéo trouvée)")
+
+    return split
+
+
+def fix_grading_coverage(split, grading_mapping):
+    """
+    S'assure que chaque niveau de grading est présent dans val et test.
+    Si un grading est absent d'un split, déplace une vidéo depuis train.
+    """
+    all_gradings = set()
+    for v in split["train"] | split["val"] | split["test"]:
+        g = extract_level(v, grading_mapping)
+        if g != "unknown":
+            all_gradings.add(g)
+
+    for target_split in ("val", "test"):
+        gradings_in_split = {extract_level(v, grading_mapping) for v in split[target_split]}
+        missing = all_gradings - gradings_in_split
+
+        if missing:
+            print(f"\n⚠️  Gradings absents de {target_split} : {sorted(missing)}")
+
+        for grading in sorted(missing):
+            candidates = [v for v in split["train"] if extract_level(v, grading_mapping) == grading]
+            if candidates:
+                video = candidates[0]
+                split["train"].remove(video)
+                split[target_split].add(video)
+                print(f"  → '{video}' (grading {grading}) déplacée de train → {target_split}")
+            else:
+                print(f"  ✗ Aucune vidéo de grading {grading} disponible dans train")
 
     return split
 
@@ -330,6 +361,8 @@ def main():
         args.ratio_split
     )
 
+    split = fix_missing_train_phases(split, video_phases, phase_to_videos, video_phase_frame_counts)
+    split = fix_grading_coverage(split, grading_mapping)
     split = fix_missing_train_phases(split, video_phases, phase_to_videos, video_phase_frame_counts)
 
     create_structure(args.dest_dir, split)
