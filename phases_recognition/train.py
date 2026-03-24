@@ -5,7 +5,7 @@ import pathlib
 from omegaconf import OmegaConf, DictConfig
 import torch
 
-from datasets import instantiate_loaders
+from dataset import instantiate_loaders
 
 from utils.helpers import (
     instantiate_dirs,
@@ -47,10 +47,6 @@ def main(config: dict | DictConfig | OmegaConf):
     visualizer = instantiate_visualizer(
         img_dir,
         **config.visualizer,
-        zero_image_dirs={
-            "train": config.dataset.train.zero_images_dir_train,
-            "val": config.dataset.val.zero_images_dir_val,
-        },
     )
 
     trainer = CataractTrainer(
@@ -76,3 +72,5 @@ if __name__ == "__main__":
 
     config = OmegaConf.load(args.config)
     main(config=config)
+
+

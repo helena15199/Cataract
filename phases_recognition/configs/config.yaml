@@ -9,6 +9,14 @@ model:
     freeze: false
 
 dataset:
+  class_names: [
+    "Capsule_polishing", "Corneal_hydration", "Hydrodissection",
+    "Incision", "Injection", "Irrigation_and_aspiration",
+    "Lens_implant_settingup", "Malyugin_ring_insertion", "Malyugin_ring_removal",
+    "Phacoemulsification", "Rhexis", "Suture",
+    "Tonifying_and_antibiotics", "Trypan_blue_injection", "Viscous_agent_injection",
+    "Viscous_agent_removal", "Wound_hydration"
+  ]
   train:
     params:
       root: "/home/helena/UCL_video_cataract/dataset_temporal/train/"
@@ -43,7 +51,7 @@ dataset:
       num_workers: 8
 
 loss:
-  target: losses.cataract_loss.CataractLoss
+  target: losses.basic_loss.CataractLoss
   params:
     label_smoothing: 0.0
 
@@ -62,10 +70,12 @@ visualizer:
   col: 8
   num_batch_to_take: 2
   class_names: [
-    "phase_0", "phase_1", "phase_2", "phase_3", "phase_4",
-    "phase_5", "phase_6", "phase_7", "phase_8", "phase_9",
-    "phase_10", "phase_11", "phase_12", "phase_13", "phase_14",
-    "phase_15", "phase_16"
+    "Capsule_polishing", "Corneal_hydration", "Hydrodissection",
+    "Incision", "Injection", "Irrigation_and_aspiration",
+    "Lens_implant_settingup", "Malyugin_ring_insertion", "Malyugin_ring_removal",
+    "Phacoemulsification", "Rhexis", "Suture",
+    "Tonifying_and_antibiotics", "Trypan_blue_injection", "Viscous_agent_injection",
+    "Viscous_agent_removal", "Wound_hydration"
   ]
 
 train:
@@ -76,3 +86,4 @@ train:
   log_every_n_steps: 10
   val_every_n_epoch: 1
   log_image_every_n_epoch: 1
+  keep_ckpt: 3

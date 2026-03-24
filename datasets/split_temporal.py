@@ -9,6 +9,30 @@ from tqdm import tqdm
 import pandas as pd
 
 
+PHASE_MAP = {
+    "Capsule_polish":                                    "Capsule_polishing",
+    "Capusule_polishing":                                "Capsule_polishing",
+    "Cornel_hydration":                                  "Corneal_hydration",
+    "Hydrate_Cornea":                                    "Corneal_hydration",
+    "Hydrate_cornea":                                    "Corneal_hydration",
+    "Wound_Hydration":                                   "Wound_hydration",
+    "IrrigationAspiration":                              "Irrigation_and_aspiration",
+    "Irrigation_and_aspirationIrrigation_and_aspiration": "Irrigation_and_aspiration",
+    "irrigation_and_aspiration":                         "Irrigation_and_aspiration",
+    "Injection":                                         "Incision",
+    "Lens_Implant":                                      "Lens_implant_settingup",
+    "Lens_implant_setting_up":                           "Lens_implant_settingup",
+    "Maliugan_ring_insertion":                           "Malyugin_ring_insertion",
+    "Maliugan_ring_removal":                             "Malyugin_ring_removal",
+    "Phaecoemulsification":                              "Phacoemulsification",
+    "Tonifying_and_Antibiotics":                         "Tonifying_and_antibiotics",
+    "Tonifying_and_antibitoics":                         "Tonifying_and_antibiotics",
+    "Tonifying_and_antiobiotics":                        "Tonifying_and_antibiotics",
+    "Viscous_Agent_Injection":                           "Viscous_agent_injection",
+    "Viscous_Agent_Removal":                             "Viscous_agent_removal",
+}
+
+
 def load_grading_mapping(excel_path):
     """
     Load grading from Excel column 'grading'.
@@ -101,22 +125,31 @@ def smart_split(video_phases, phase_to_videos, seed, ratios):
         n = len(videos)
 
         if n == 1:
+            # Phase rare : toujours en train
             train.add(videos[0])
             used_videos.add(videos[0])
 
         elif n == 2:
+            # 1 train + 1 dans le plus petit de val/test pour équilibrer
             train.add(videos[0])
-            test.add(videos[1])
+            if len(val) <= len(test):
+                val.add(videos[1])
+            else:
+                test.add(videos[1])
             used_videos.update(videos)
 
         elif n == 3:
-            train.update(videos[:2])
-            val.add(videos[2])
+            # 1 train + 1 val + 1 test
+            train.add(videos[0])
+            val.add(videos[1])
+            test.add(videos[2])
             used_videos.update(videos)
 
         else:
             n_train = int(ratios[0] * n)
-            n_val = int(ratios[1] * n)
+            n_remaining = n - n_train
+            n_val = n_remaining // 2
+            n_test = n_remaining - n_val
 
             train.update(videos[:n_train])
             val.update(videos[n_train:n_train + n_val])
@@ -170,9 +203,12 @@ def populate_dataset_flat(source_dir, dest_dir, split):
                         continue
 
                     dst_file = os.path.join(dest_video_dir, file)
+                    
+                    if os.path.exists(dst_file):
+                        continue
                     shutil.copy2(src_file, dst_file)
 
-                    labels_dict[f"{split_name}/{video}/{file}"] = phase
+                    labels_dict[f"{split_name}/{video}/{file}"] = PHASE_MAP.get(phase, phase)
 
     return labels_dict
 

@@ -8,8 +8,6 @@ import matplotlib.pyplot as plt
 import torch
 import torch.nn.functional as F
 
-matplotlib.set_loglevel("warning")
-
 
 class ClassificationVisualizer:
     def __init__(
