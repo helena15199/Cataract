@@ -41,12 +41,22 @@ def main(config: dict | DictConfig | OmegaConf):
     config.loss.params.weight = class_weights.tolist()
     loss_fn: CataractLoss = instantiate_from_config(config.loss)
 
-    optimizer: torch.optim.Optimizer = instantiate_from_config(
-        config.optimizer, params=model.parameters()
+    opt_params = OmegaConf.to_container(config.optimizer.params, resolve=True)
+    backbone_lr = opt_params.pop("backbone_lr")
+    optimizer: torch.optim.Optimizer = getattr(torch.optim, config.optimizer.target.split(".")[-1])(
+        [
+            {"params": model.backbone.parameters(), "lr": backbone_lr},
+            {"params": model.fc_complete_number.parameters()},
+        ],
+        **opt_params,
     )
     lr_scheduler = instantiate_from_config(config.lr_scheduler, optimizer=optimizer)
 
-    metrics_fn = CataractMetrics(num_classes=17)
+    metrics_fn = CataractMetrics(
+        num_classes=config.model.num_classes,
+        class_names=list(config.dataset.class_names),
+        others_classes=list(config.metrics.others_classes),
+    )
 
     visualizer = instantiate_visualizer(
         img_dir,
@@ -70,8 +80,7 @@ def main(config: dict | DictConfig | OmegaConf):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser("Run training")
-    parser.add_argument("--config", type=str, default="configs/config.yaml")
-    parser.add_argument("--reset", action="store_true")
+    parser.add_argument("--config", type=str, default="phases_recognition/configs/config.yaml")
     args = parser.parse_args()
 
     config = OmegaConf.load(args.config)

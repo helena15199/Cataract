@@ -16,7 +16,6 @@ from torch.utils.data import DataLoader
 from utils.helpers import instantiate_from_config
 
 
-
 def basic_preprocess_image(image_path: str, max_side: int = 256):
     image = cv2.imread(image_path)
     if image is None:
@@ -49,6 +48,7 @@ class ImageNumbersDataset(torch_data.Dataset):
         max_side: int = 256,
         transform_fn: Callable | None = None,
         seed: int = 42,
+        others_classes: list[str] | None = None,
     ):
         super().__init__()
         self.root = pathlib.Path(root)
@@ -56,12 +56,13 @@ class ImageNumbersDataset(torch_data.Dataset):
         self.transform_fn = transform_fn
         self.class_to_idx = {name: idx for idx, name in enumerate(class_names)}
 
-        # labels.json est à la racine du dataset (un niveau au-dessus du split)
+        # Remap des phases rares vers "Others"
+        self.others_remap = {cls: "Others" for cls in (others_classes or [])}
+
         labels_json_path = self.root.parent / "labels.json"
         with open(labels_json_path) as f:
             all_labels = json.load(f)
 
-        # Ne garder que les entrées de ce split
         split_name = self.root.name  # "train", "val" ou "test"
         self.path_to_phase = {
             k: v for k, v in all_labels.items()
@@ -71,13 +72,17 @@ class ImageNumbersDataset(torch_data.Dataset):
         self.all_path_images = [self.root.parent / k for k in self.path_to_phase]
         random.Random(seed).shuffle(self.all_path_images)
 
+    def _get_phase(self, path: pathlib.Path) -> str:
+        rel_key = str(path.relative_to(self.root.parent)).replace("\\", "/")
+        phase = self.path_to_phase[rel_key]
+        return self.others_remap.get(phase, phase)
+
     def __len__(self) -> int:
         return len(self.all_path_images)
 
     def __getitem__(self, index: int):
         path = self.all_path_images[index]
-        rel_key = str(path.relative_to(self.root.parent)).replace("\\", "/")
-        phase = self.path_to_phase[rel_key]
+        phase = self._get_phase(path)
         image, label, path_str = prepare_data(
             path,
             phase=phase,
@@ -100,15 +105,11 @@ def build_weighted_sampler(dataset: ImageNumbersDataset) -> torch.utils.data.Wei
     num_classes = len(dataset.class_to_idx)
     counts = torch.zeros(num_classes)
     for path in dataset.all_path_images:
-        rel_key = str(path.relative_to(dataset.root.parent)).replace("\\", "/")
-        phase = dataset.path_to_phase[rel_key]
-        counts[dataset.class_to_idx[phase]] += 1
+        counts[dataset.class_to_idx[dataset._get_phase(path)]] += 1
 
     class_weights = 1.0 / counts.clamp(min=1)
     sample_weights = torch.tensor([
-        class_weights[dataset.class_to_idx[dataset.path_to_phase[
-            str(p.relative_to(dataset.root.parent)).replace("\\", "/")
-        ]]].item()
+        class_weights[dataset.class_to_idx[dataset._get_phase(p)]].item()
         for p in dataset.all_path_images
     ])
     return torch.utils.data.WeightedRandomSampler(
@@ -118,36 +119,41 @@ def build_weighted_sampler(dataset: ImageNumbersDataset) -> torch.utils.data.Wei
     )
 
 
-def instantiate_dataloader(split_config: DictConfig | dict, class_names: list[str], use_sampler: bool = False) -> DataLoader:
-    transform_fn = build_transforms(split_config.get("transforms"))
-    dataset = ImageNumbersDataset(
-        **split_config["params"],
-        class_names=class_names,
-        transform_fn=transform_fn,
-    )
-    loader_params = dict(split_config["loader_params"])
-    if use_sampler:
-        loader_params["sampler"] = build_weighted_sampler(dataset)
-        loader_params.pop("shuffle", None)  # shuffle et sampler sont incompatibles
-    return DataLoader(dataset, **loader_params)
-
-
 def compute_class_weights(dataset: ImageNumbersDataset) -> torch.Tensor:
     """Retourne un tenseur de weights inversement proportionnel à la fréquence de chaque classe."""
     num_classes = len(dataset.class_to_idx)
     counts = torch.zeros(num_classes)
     for path in dataset.all_path_images:
-        rel_key = str(path.relative_to(dataset.root.parent)).replace("\\", "/")
-        phase = dataset.path_to_phase[rel_key]
-        counts[dataset.class_to_idx[phase]] += 1
+        counts[dataset.class_to_idx[dataset._get_phase(path)]] += 1
     weights = counts.sum() / (num_classes * counts.clamp(min=1))
     return weights
+
+
+def instantiate_dataloader(
+    split_config: DictConfig | dict,
+    class_names: list[str],
+    others_classes: list[str] | None = None,
+    use_sampler: bool = False,
+) -> DataLoader:
+    transform_fn = build_transforms(split_config.get("transforms"))
+    dataset = ImageNumbersDataset(
+        **split_config["params"],
+        class_names=class_names,
+        transform_fn=transform_fn,
+        others_classes=others_classes,
+    )
+    loader_params = dict(split_config["loader_params"])
+    if use_sampler:
+        loader_params["sampler"] = build_weighted_sampler(dataset)
+        loader_params.pop("shuffle", None)
+    return DataLoader(dataset, **loader_params)
 
 
 def instantiate_loaders(
     dataset_dict: DictConfig | dict,
 ) -> tuple[DataLoader, DataLoader]:
     class_names = list(dataset_dict["class_names"])
-    train_loader = instantiate_dataloader(dataset_dict["train"], class_names, use_sampler=True)
-    val_loader = instantiate_dataloader(dataset_dict["val"], class_names, use_sampler=False)
+    others_classes = list(dataset_dict.get("others_classes") or [])
+    train_loader = instantiate_dataloader(dataset_dict["train"], class_names, others_classes, use_sampler=True)
+    val_loader = instantiate_dataloader(dataset_dict["val"], class_names, others_classes, use_sampler=False)
     return train_loader, val_loader

@@ -66,6 +66,8 @@ class CataractTrainer:
         self.best_metric = -1
 
         self.model.to(self.device)
+        self.loss_fn.to(self.device)
+        self.visualizer.writer = self.writer
 
     def run_step(
         self, images: torch.Tensor, labels: torch.Tensor

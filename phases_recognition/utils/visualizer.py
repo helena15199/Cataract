@@ -24,8 +24,8 @@ class ClassificationVisualizer:
         self.col = col
         self.num_batch_to_take = num_batch_to_take
         self.num_classes = num_classes
-        # Optionnel : noms lisibles des phases ex ["Incision", "Capsulorhexis", ...]
         self.class_names = class_names
+        self.writer = None  # injecté par le trainer après création du SummaryWriter
 
     def _label_name(self, idx: int) -> str:
         if self.class_names is not None and idx < len(self.class_names):
@@ -58,12 +58,15 @@ class ClassificationVisualizer:
         max_probs = []
 
         for ax_idx, ax in enumerate(axes):
-            ax.axis("off")
+            ax.set_xticks([])
+            ax.set_yticks([])
             if ax_idx >= len(paths):
+                ax.axis("off")
                 continue
 
             img = cv2.imread(paths[ax_idx])
             if img is None:
+                ax.axis("off")
                 continue
             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
@@ -79,30 +82,24 @@ class ClassificationVisualizer:
             edge_color = cmap(max_prob)
 
             ax.imshow(img)
-            ax.set_xticks([])
-            ax.set_yticks([])
             ax.set_title(
                 f"GT: {self._label_name(gt)}\nPred: {self._label_name(pred)} ({max_prob:.2f})",
                 color=title_color,
                 fontsize=7,
             )
             for spine in ax.spines.values():
+                spine.set_visible(True)
                 spine.set_edgecolor(edge_color)
-                spine.set_linewidth(4)
+                spine.set_linewidth(6)
 
         if max_probs:
             sm.set_clim(vmin=min(max_probs), vmax=max(max_probs))
 
-        fig.colorbar(
-            sm,
-            ax=axes,
-            orientation="horizontal",
-            fraction=0.03,
-            pad=0.05,
-            label="Prediction confidence",
-        )
         fig.suptitle(f"{tag} | {epoch=} | {global_step=} | {batch_idx=}", fontsize=10)
-        fig.tight_layout()
+        fig.tight_layout(rect=[0, 0.05, 1, 1])
+
+        cbar_ax = fig.add_axes([0.15, 0.01, 0.7, 0.02])
+        fig.colorbar(sm, cax=cbar_ax, orientation="horizontal", label="Prediction confidence")
 
         outdir = self.img_dir / tag
         outdir.mkdir(exist_ok=True, parents=True)
@@ -111,6 +108,8 @@ class ClassificationVisualizer:
             dpi=100,
             bbox_inches="tight",
         )
+        if self.writer is not None:
+            self.writer.add_figure(f"{tag}/predictions_batch{batch_idx}", fig, global_step=epoch)
         plt.close(fig)
 
 

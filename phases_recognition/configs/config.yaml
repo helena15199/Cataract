@@ -1,9 +1,9 @@
 root_dir: "/home/helena/experiments_cataract/"
-experiment_name: "cataract_v1.0"
+experiment_name: "cataract_v1.3_mlphead_dropout"
 
 model:
   name: simple
-  num_classes: 17
+  num_classes: 13
   backbone:
     name: resnet50
     freeze: false
@@ -11,20 +11,21 @@ model:
 dataset:
   class_names: [
     "Capsule_polishing", "Corneal_hydration", "Hydrodissection",
-    "Incision", "Injection", "Irrigation_and_aspiration",
-    "Lens_implant_settingup", "Malyugin_ring_insertion", "Malyugin_ring_removal",
-    "Phacoemulsification", "Rhexis", "Suture",
-    "Tonifying_and_antibiotics", "Trypan_blue_injection", "Viscous_agent_injection",
+    "Incision", "Irrigation_and_aspiration",
+    "Lens_implant_settingup", "Others", "Phacoemulsification", "Rhexis",
+    "Tonifying_and_antibiotics", "Viscous_agent_injection",
     "Viscous_agent_removal", "Wound_hydration"
   ]
+  others_classes: ["Malyugin_ring_insertion", "Malyugin_ring_removal", "Suture", "Trypan_blue_injection"]
   train:
     params:
       root: "/home/helena/UCL_video_cataract/dataset_temporal/train/"
       max_side: 224
     loader_params:
-      batch_size: 64
+      batch_size: 256
       shuffle: true
-      num_workers: 8
+      num_workers: 16
+      pin_memory: true
     transforms:
       flip:
         target: albumentations.HorizontalFlip
@@ -50,25 +51,27 @@ dataset:
       root: "/home/helena/UCL_video_cataract/dataset_temporal/val/"
       max_side: 224
     loader_params:
-      batch_size: 128
+      batch_size: 512
       shuffle: false
-      num_workers: 8
+      num_workers: 16
+      pin_memory: true
 
 loss:
   target: losses.basic_loss.CataractLoss
   params:
-    label_smoothing: 0.0
+    label_smoothing: 0.1
 
 optimizer:
   target: torch.optim.AdamW
   params:
-    lr: 1e-4
+    lr: 1e-4        # tête de classification
+    backbone_lr: 1e-5  # backbone pretrained
 
 lr_scheduler:
   target: utils.lr_scheduler.get_linear_warmup_cosine_decay_lr_scheduler
   params:
     n_warmup_steps: 50
-    n_total_steps: 15000  # ~300 steps/epoch * 50 epochs, à ajuster selon ton dataset
+    n_total_steps: 26000  
     min_lr_ratio: 0.01    # le LR final sera 1e-4 * 0.01 = 1e-6
 
 visualizer:
@@ -77,15 +80,17 @@ visualizer:
   num_batch_to_take: 2
   class_names: [
     "Capsule_polishing", "Corneal_hydration", "Hydrodissection",
-    "Incision", "Injection", "Irrigation_and_aspiration",
-    "Lens_implant_settingup", "Malyugin_ring_insertion", "Malyugin_ring_removal",
-    "Phacoemulsification", "Rhexis", "Suture",
-    "Tonifying_and_antibiotics", "Trypan_blue_injection", "Viscous_agent_injection",
+    "Incision", "Irrigation_and_aspiration",
+    "Lens_implant_settingup", "Others", "Phacoemulsification", "Rhexis",
+    "Tonifying_and_antibiotics", "Viscous_agent_injection",
     "Viscous_agent_removal", "Wound_hydration"
   ]
 
+metrics:
+  others_classes: ["Others"]
+
 train:
-  epochs: 50
+  epochs: 40
   device: "cuda:0"
   use_amp: true
   max_norm: 1.0
