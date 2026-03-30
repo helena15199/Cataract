@@ -34,6 +34,65 @@ def compute_ece(probs: torch.Tensor, labels: torch.Tensor, n_bins: int = 15) -> 
     return ece
 
 
+def plot_phase_timeline(
+    paths: list[str],
+    preds: torch.Tensor,
+    labels: torch.Tensor,
+    class_names: list[str],
+    out_path: pathlib.Path,
+):
+    from collections import defaultdict
+
+    # Group frames by video (parent directory name), sort by filename
+    video_data: dict[str, list] = defaultdict(list)
+    for i, p in enumerate(paths):
+        video_name = pathlib.Path(p).parent.name
+        video_data[video_name].append((p, preds[i].item(), labels[i].item()))
+    video_names = sorted(video_data.keys())
+    for v in video_names:
+        video_data[v].sort(key=lambda x: x[0])
+
+    n_classes = len(class_names)
+    cmap = plt.cm.get_cmap("tab20", n_classes)
+    colors = [cmap(i) for i in range(n_classes)]
+
+    n_videos = len(video_names)
+    fig, axes = plt.subplots(n_videos, 1, figsize=(14, n_videos * 1.2 + 1.5), squeeze=False)
+
+    for row, video_name in enumerate(video_names):
+        ax = axes[row, 0]
+        frames = video_data[video_name]
+        n_frames = len(frames)
+        gt_seq = [f[2] for f in frames]
+        pred_seq = [f[1] for f in frames]
+
+        for bar_idx, seq in enumerate([gt_seq, pred_seq]):
+            start = 0
+            for i in range(1, n_frames + 1):
+                if i == n_frames or seq[i] != seq[start]:
+                    left = start / n_frames
+                    width = (i - start) / n_frames
+                    ax.barh(bar_idx, width, left=left, color=colors[seq[start]], height=0.8, align="center")
+                    start = i
+
+        ax.set_xlim(0, 1)
+        ax.set_ylim(-0.5, 1.5)
+        ax.set_yticks([0, 1])
+        ax.set_yticklabels(["Pred", "GT"], fontsize=8)
+        ax.set_xticks([])
+        ax.set_title(video_name, loc="left", fontsize=9, pad=2)
+        for spine in ["top", "right", "bottom"]:
+            ax.spines[spine].set_visible(False)
+
+    handles = [plt.Rectangle((0, 0), 1, 1, color=colors[i]) for i in range(n_classes)]
+    fig.legend(handles, class_names, loc="lower center", ncol=min(n_classes, 8),
+               fontsize=8, bbox_to_anchor=(0.5, 0), frameon=False)
+    fig.suptitle("Phase timeline — GT vs Predicted", fontsize=11, y=1.0)
+    fig.tight_layout(rect=[0, 0.06, 1, 1])
+    fig.savefig(out_path, dpi=100, bbox_inches="tight")
+    plt.close(fig)
+
+
 def plot_confidence_histogram(probs: torch.Tensor, labels: torch.Tensor, out_path: pathlib.Path):
     confidences, preds = probs.max(dim=1)
     correct = preds.eq(labels)
@@ -157,6 +216,7 @@ def main(config_path: str, ckpt_path: str, out_dir: str):
     plot_confusion_matrix(preds[eval_mask], labels[eval_mask], eval_class_names, out_dir / "confusion_matrix.png", eval_indices=eval_indices)
     plot_confusion_matrix(preds[eval_mask], labels[eval_mask], eval_class_names, out_dir / "confusion_matrix_counts.png", normalize=False, eval_indices=eval_indices)
     plot_confidence_histogram(probs[eval_mask], labels[eval_mask], out_dir / "confidence_histogram.png")
+    plot_phase_timeline(paths, preds, labels, class_names, out_dir / "phase_timeline.png")
 
     print(f"\nRésultats sauvegardés dans {out_dir}")
 
