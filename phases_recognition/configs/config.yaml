@@ -1,5 +1,5 @@
 root_dir: "/home/helena/experiments_cataract/"
-experiment_name: "cataract_v1.3_mlphead_dropout"
+experiment_name: "cataract_v1.2_40ep_diffLR_smoothing"
 
 model:
   name: simple

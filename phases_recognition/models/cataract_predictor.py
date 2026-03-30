@@ -12,12 +12,7 @@ class CataractPredictor(nn.Module):
 
         self.backbone = backbone
 
-        self.fc_complete_number = nn.Sequential(
-            nn.Linear(self.final_size, 512),
-            nn.ReLU(),
-            nn.Dropout(0.5),
-            nn.Linear(512, num_classes),
-        )
+        self.fc_complete_number = nn.Linear(self.final_size, num_classes)
 
     def forward(self, image: torch.Tensor) -> torch.Tensor:
         x = self.backbone(image)

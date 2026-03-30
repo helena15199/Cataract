@@ -12,11 +12,20 @@ This repository provides a complete pipeline to:
 
 Your raw videos must be organized as:
 
-- Each folder contains **one video** and its **VIA JSON annotations**.  
-- The JSON must include:  
-  - `z = [start_time, end_time]`  
-  - `av["1"] = phase_name`  
-  - `vid = video_id`  
+```
+dataset_raw/
+├── Video_01/
+│   ├── video.mp4
+│   └── annotations.json
+├── Video_02/
+│   └── ...
+```
+
+Each folder contains **one video** and its **VIA JSON annotations**.
+The JSON must include:
+- `z = [start_time, end_time]` — segment timestamps
+- `av["1"] = phase_name` — surgical phase label
+- `vid = video_id` — video identifier
 
 
 ## Step 1 — Frame Extraction
