@@ -56,6 +56,7 @@ class TemporalTrainer:
         log_every_n_steps: int = 5,
         val_every_n_epoch: int = 1,
         keep_ckpt: int = 3,
+        feature_noise_std: float = 0.0,
         **_,  # absorb unknown config keys
     ):
         self.model       = model
@@ -71,7 +72,8 @@ class TemporalTrainer:
         self.max_norm    = max_norm
         self.log_every_n_steps = log_every_n_steps
         self.val_every_n_epoch = val_every_n_epoch
-        self.keep_ckpt   = keep_ckpt
+        self.keep_ckpt         = keep_ckpt
+        self.feature_noise_std = feature_noise_std
 
         pathlib.Path(log_dir).mkdir(exist_ok=True, parents=True)
         pathlib.Path(ckpt_dir).mkdir(exist_ok=True, parents=True)
@@ -92,6 +94,8 @@ class TemporalTrainer:
         labels:   torch.Tensor,  # (T,)
     ) -> tuple[torch.Tensor, dict, list[torch.Tensor]]:
         features = features.unsqueeze(0).to(self.device)  # (1, T, D)
+        if self.feature_noise_std > 0 and self.model.training:
+            features = features + torch.randn_like(features) * self.feature_noise_std
         labels   = labels.to(self.device)                 # (T,)
 
         stage_logits = self.model(features)               # list of (1, C, T)
@@ -228,6 +232,7 @@ def main(config: DictConfig):
     loss_fn = MSTCNLoss(
         lambda_smoothing=config.loss.get("lambda_smoothing", 0.15),
         tau=config.loss.get("tau", 4.0),
+        label_smoothing=config.loss.get("label_smoothing", 0.0),
     )
 
     optimizer = getattr(torch.optim, config.optimizer.target.split(".")[-1])(

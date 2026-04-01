@@ -44,10 +44,11 @@ class MSTCNLoss(nn.Module):
         tau:              clipping threshold for TMSE (4.0 in the original paper).
     """
 
-    def __init__(self, lambda_smoothing: float = 0.15, tau: float = 4.0):
+    def __init__(self, lambda_smoothing: float = 0.15, tau: float = 4.0,
+                 label_smoothing: float = 0.0):
         super().__init__()
         self.lambda_smoothing = lambda_smoothing
-        self.ce   = nn.CrossEntropyLoss(ignore_index=-1)
+        self.ce   = nn.CrossEntropyLoss(ignore_index=-1, label_smoothing=label_smoothing)
         self.tmse = _TMSELoss(tau=tau)
 
     def forward(

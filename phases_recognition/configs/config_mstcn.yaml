@@ -1,5 +1,5 @@
 root_dir: "/home/helena/experiments_cataract/"
-experiment_name: "mstcn_v1.2_4stages_10layers_adamw_wd_drop07_fmap32"
+experiment_name: "mstcn_v1.3_4stages_10layers_adamw_noise_labelsmooth"
 
 model:
   name: mstcn
@@ -28,6 +28,7 @@ dataset:
 loss:
   lambda_smoothing: 0.15   # weight of the TMSE smoothness term
   tau: 4.0                 # TMSE clipping threshold
+  label_smoothing: 0.1     # réduit l'overconfidence sur les phases longues
 
 optimizer:
   target: torch.optim.AdamW
@@ -52,3 +53,4 @@ train:
   log_every_n_steps: 5
   val_every_n_epoch: 1
   keep_ckpt: 3
+  feature_noise_std: 0.1   # bruit gaussien sur les features pendant le train
