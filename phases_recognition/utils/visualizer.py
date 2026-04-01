@@ -129,3 +129,79 @@ def instantiate_visualizer(
         num_classes=num_classes,
         class_names=class_names,
     )
+
+
+class TemporalVisualizer:
+    """
+    Génère une timeline GT vs Prédiction pour chaque vidéo de validation.
+    Sauvegarde les figures sur disque et les logue dans TensorBoard.
+
+    Appelé à chaque epoch de validation avec les séquences accumulées.
+    """
+
+    def __init__(self, img_dir: str, class_names: list[str]):
+        self.img_dir = pathlib.Path(img_dir)
+        self.class_names = class_names
+        self.writer = None  # injecté par le trainer
+
+        n = len(class_names)
+        cmap = matplotlib.colormaps.get_cmap("tab20")
+        self._colors = [cmap(i / max(n - 1, 1)) for i in range(n)]
+
+    def _draw_timeline(
+        self,
+        gt_seq: list[int],
+        pred_seq: list[int],
+        video_name: str,
+    ) -> plt.Figure:
+        n_frames = len(gt_seq)
+        fig, axes = plt.subplots(2, 1, figsize=(14, 2.0), squeeze=False)
+
+        for row_idx, (seq, label) in enumerate([(gt_seq, "GT"), (pred_seq, "Pred")]):
+            ax = axes[row_idx, 0]
+            start = 0
+            for i in range(1, n_frames + 1):
+                if i == n_frames or seq[i] != seq[start]:
+                    left  = start / n_frames
+                    width = (i - start) / n_frames
+                    ax.barh(0, width, left=left, color=self._colors[seq[start]],
+                            height=0.8, align="center")
+                    start = i
+            ax.set_xlim(0, 1)
+            ax.set_ylim(-0.5, 0.5)
+            ax.set_yticks([0])
+            ax.set_yticklabels([label], fontsize=9)
+            ax.set_xticks([])
+            for spine in ["top", "right", "bottom"]:
+                ax.spines[spine].set_visible(False)
+
+        handles = [plt.Rectangle((0, 0), 1, 1, color=self._colors[i])
+                   for i in range(len(self.class_names))]
+        fig.legend(handles, self.class_names,
+                   loc="lower center", ncol=min(len(self.class_names), 7),
+                   fontsize=7, bbox_to_anchor=(0.5, -0.35), frameon=False)
+        fig.suptitle(video_name, fontsize=9, x=0.01, ha="left")
+        fig.tight_layout(rect=[0, 0.15, 1, 1])
+        return fig
+
+    @torch.no_grad()
+    def log_epoch(
+        self,
+        video_sequences: list[tuple[list[int], list[int], str]],
+        epoch: int,
+    ):
+        """
+        Args:
+            video_sequences: liste de (gt_seq, pred_seq, video_name) pour toutes les vidéos de val
+            epoch: numéro d'epoch courant
+        """
+        out_dir = self.img_dir / f"epoch_{epoch:04d}"
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        for gt_seq, pred_seq, video_name in video_sequences:
+            fig = self._draw_timeline(gt_seq, pred_seq, video_name)
+            safe_name = video_name[:60].replace("/", "_")
+            fig.savefig(out_dir / f"{safe_name}.png", dpi=80, bbox_inches="tight")
+            if self.writer is not None:
+                self.writer.add_figure(f"val/timeline/{safe_name}", fig, global_step=epoch)
+            plt.close(fig)
