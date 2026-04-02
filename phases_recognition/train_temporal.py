@@ -22,7 +22,7 @@ from loguru import logger
 from omegaconf import OmegaConf, DictConfig
 from torch.utils.tensorboard import SummaryWriter
 
-from dataset.feature_dataset import instantiate_feature_loaders
+from dataset.feature_dataset import instantiate_feature_loaders, VideoFeatureDataset
 from losses.mstcn_loss import MSTCNLoss
 from metrics.cataract_metrics import CataractMetrics
 from models import instantiate_model
@@ -33,6 +33,21 @@ from utils.helpers import (
 )
 from utils.visualizer import TemporalVisualizer
 from utils.lr_scheduler import get_linear_warmup_cosine_decay_lr_scheduler
+
+
+def compute_class_weights(train_root: str, num_classes: int) -> torch.Tensor:
+    """Inverse-frequency class weights computed from all training label files."""
+    counts = np.zeros(num_classes, dtype=np.int64)
+    for p in sorted(pathlib.Path(train_root).glob("*_labels.npy")):
+        labels = np.load(p)
+        for c in range(num_classes):
+            counts[c] += int((labels == c).sum())
+    total = counts.sum()
+    weights = total / (num_classes * np.maximum(counts, 1))
+    logger.info("Class weights (inverse-freq):")
+    for i, w in enumerate(weights):
+        logger.info(f"  class {i:2d}: count={counts[i]:7d}  weight={w:.3f}")
+    return torch.tensor(weights, dtype=torch.float32)
 
 
 # ---------------------------------------------------------------------------
@@ -229,10 +244,19 @@ def main(config: DictConfig):
         f"Dataset: {len(train_loader)} train videos, {len(val_loader)} val videos"
     )
 
+    class_weights = None
+    if config.loss.get("use_class_weights", False):
+        class_weights = compute_class_weights(
+            train_root=config.dataset["train"]["params"]["root"],
+            num_classes=config.model.num_classes,
+        )
+
     loss_fn = MSTCNLoss(
         lambda_smoothing=config.loss.get("lambda_smoothing", 0.15),
         tau=config.loss.get("tau", 4.0),
         label_smoothing=config.loss.get("label_smoothing", 0.0),
+        class_weights=class_weights,
+        focal_gamma=config.loss.get("focal_gamma", 0.0),
     )
 
     optimizer = getattr(torch.optim, config.optimizer.target.split(".")[-1])(

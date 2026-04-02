@@ -1,5 +1,5 @@
 root_dir: "/home/helena/experiments_cataract/"
-experiment_name: "mstcn_v1.3_4stages_10layers_adamw_noise_labelsmooth"
+experiment_name: "mstcn_v1.4_classweights_smoothing0.3"
 
 model:
   name: mstcn
@@ -26,9 +26,10 @@ dataset:
       root: "/home/helena/UCL_video_cataract/features/val/"
 
 loss:
-  lambda_smoothing: 0.15   # weight of the TMSE smoothness term
+  lambda_smoothing: 0.3    # augmenté (0.15→0.3) pour réduire la sur-segmentation
   tau: 4.0                 # TMSE clipping threshold
   label_smoothing: 0.1     # réduit l'overconfidence sur les phases longues
+  use_class_weights: true  # inverse-freq weights — booste Irrigation_and_aspiration
 
 optimizer:
   target: torch.optim.AdamW
