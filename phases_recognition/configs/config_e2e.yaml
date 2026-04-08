@@ -1,0 +1,74 @@
+root_dir: "/home/helena/experiments_cataract/"
+experiment_name: "e2e_v1_resnet50_mstcn_frozen10ep"
+
+model:
+  name: e2e
+  num_classes: 13
+  backbone_name: resnet50
+  cataract_backbone_ckpt: "/home/helena/experiments_cataract/cataract_v1.2_40ep_diffLR_smoothing_date=2026_03_26_09_39_13/ckpt/best.pt"
+  # MS-TCN++ settings (mêmes que config_mstcn.yaml)
+  num_stages: 4
+  num_layers: 10
+  num_f_maps: 64      
+  input_dim: 2048
+  dropout: 0.5
+
+dataset:
+  class_names: [
+    "Capsule_polishing", "Corneal_hydration", "Hydrodissection",
+    "Incision", "Irrigation_and_aspiration",
+    "Lens_implant_settingup", "Others", "Phacoemulsification", "Rhexis",
+    "Tonifying_and_antibiotics", "Viscous_agent_injection",
+    "Viscous_agent_removal", "Wound_hydration"
+  ]
+  others_classes: ["Malyugin_ring_insertion", "Malyugin_ring_removal", "Suture", "Trypan_blue_injection"]
+  T_window: 128       # frames par fenêtre d'entraînement (~25 secondes à 5fps)
+  train:
+    params:
+      root: "/home/helena/UCL_video_cataract/dataset_temporal/train/"
+      max_side: 224
+    transforms:
+      flip:
+        target: albumentations.HorizontalFlip
+        params:
+          p: 0.5
+      brightness:
+        target: albumentations.RandomBrightnessContrast
+        params:
+          brightness_limit: 0.2
+          contrast_limit: 0.2
+          p: 0.5
+  val:
+    params:
+      root: "/home/helena/UCL_video_cataract/dataset_temporal/val/"
+      max_side: 224
+
+loss:
+  lambda_smoothing: 0.15
+  tau: 4.0
+  label_smoothing: 0.1
+
+optimizer:
+  params:
+    lr: 1e-4            # LR du TCN (tête temporelle)
+    backbone_lr: 1e-6   # LR du backbone — très conservateur, on part du checkpoint cataracte
+    weight_decay: 1e-3
+
+lr_scheduler:
+  params:
+    n_warmup_steps: 200
+    n_total_steps: 30000   # ~80 epochs × ~370 windows
+    min_lr_ratio: 0.01
+
+metrics:
+  others_classes: ["Others"]
+
+train:
+  epochs: 80
+  device: "cuda:0"
+  use_amp: true           # fp16 indispensable — backbone forward sur 128 frames
+  max_norm: 1.0
+  freeze_backbone_epochs: 5    # réduit à 5 — backbone déjà bon (checkpoint cataracte)
+  log_every_n_steps: 10
+  val_every_n_epoch: 1
+  keep_ckpt: 3

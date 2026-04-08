@@ -4,6 +4,8 @@ from torch import nn
 import torchvision.models as tv_models
 
 from .cataract_predictor import CataractPredictor
+from .mstcn import MSTCNPlusPlus, instantiate_mstcn
+from .e2e_model import E2ETemporalModel, instantiate_e2e_model
 
 RESNET_VARIANTS = {
     "resnet18":  (tv_models.resnet18,  tv_models.ResNet18_Weights.DEFAULT),
@@ -40,8 +42,16 @@ def build_pretrained_backbone(backbone_name: str, freeze: bool = False) -> tuple
     return backbone, feature_dim
 
 
-def instantiate_model(model_config: DictConfig | dict) -> CataractPredictor:
-    predictor_cls = PREDICTORS[model_config["name"]]
+def instantiate_model(model_config: DictConfig | dict) -> nn.Module:
+    name = model_config["name"]
+
+    if name == "mstcn":
+        return instantiate_mstcn(model_config)
+
+    if name == "e2e":
+        return instantiate_e2e_model(model_config)
+
+    predictor_cls = PREDICTORS[name]
     num_classes = model_config.get("num_classes", 17)
     backbone_name = model_config["backbone"]["name"]  # ex: "resnet50"
     freeze = model_config["backbone"].get("freeze", False)
