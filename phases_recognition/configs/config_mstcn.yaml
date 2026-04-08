@@ -1,5 +1,5 @@
 root_dir: "/home/helena/experiments_cataract/"
-experiment_name: "mstcn_v1.4_classweights_smoothing0.3"
+experiment_name: "mstcn_v1.5_best_lam0.05_L10_200ep"
 
 model:
   name: mstcn
@@ -26,10 +26,11 @@ dataset:
       root: "/home/helena/UCL_video_cataract/features/val/"
 
 loss:
-  lambda_smoothing: 0.3    # augmenté (0.15→0.3) pour réduire la sur-segmentation
-  tau: 4.0                 # TMSE clipping threshold
+  lambda_smoothing: 0.05   # meilleure config du sweep
+  tau: 3.0                 # TMSE clipping threshold
   label_smoothing: 0.1     # réduit l'overconfidence sur les phases longues
   use_class_weights: true  # inverse-freq weights — booste Irrigation_and_aspiration
+  focal_gamma: 0.0         # CE classique (meilleur F1_macro dans le sweep)
 
 optimizer:
   target: torch.optim.AdamW
