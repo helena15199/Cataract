@@ -1,0 +1,61 @@
+root_dir: "/home/helena/experiments_cataract/"
+experiment_name: "tecno_v1.0_4stages_lstm256_bidir"
+
+model:
+  name: tecno
+  num_classes: 13
+  num_stages: 4          # 1 LSTM stage + 3 TCN refinement stages
+  num_layers: 10         # dilated layers per TCN refinement stage
+  num_f_maps: 32         # channels in TCN stages
+  hidden_dim: 256        # LSTM hidden size
+  num_lstm_layers: 2     # stacked LSTM layers
+  input_dim: 2048        # ResNet50 feature dimension
+  dropout: 0.3
+  bidirectional: true    # full video available at inference → bidirectional OK
+
+dataset:
+  class_names: [
+    "Capsule_polishing", "Corneal_hydration", "Hydrodissection",
+    "Incision", "Irrigation_and_aspiration",
+    "Lens_implant_settingup", "Others", "Phacoemulsification", "Rhexis",
+    "Tonifying_and_antibiotics", "Viscous_agent_injection",
+    "Viscous_agent_removal", "Wound_hydration"
+  ]
+  train:
+    params:
+      root: "/home/helena/UCL_video_cataract/features/train/"
+  val:
+    params:
+      root: "/home/helena/UCL_video_cataract/features/val/"
+
+loss:
+  lambda_smoothing: 0.05   # optimal d'après le sweep MS-TCN
+  tau: 4.0
+  label_smoothing: 0.1
+  use_class_weights: true
+  focal_gamma: 0.0
+
+optimizer:
+  target: torch.optim.AdamW
+  params:
+    lr: 3e-4
+    weight_decay: 1e-3
+
+lr_scheduler:
+  params:
+    n_warmup_steps: 100
+    n_total_steps: 13000   # ~200 epochs × 65 videos
+    min_lr_ratio: 0.01
+
+metrics:
+  others_classes: ["Others"]
+
+train:
+  epochs: 200
+  device: "cuda:0"
+  use_amp: false
+  max_norm: 1.0
+  log_every_n_steps: 5
+  val_every_n_epoch: 1
+  keep_ckpt: 3
+  feature_noise_std: 0.1

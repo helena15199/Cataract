@@ -1,0 +1,59 @@
+root_dir: "/home/helena/experiments_cataract/"
+experiment_name: "asformer_v1.0_4stages_10layers_d64"
+
+model:
+  name: asformer
+  num_classes: 13
+  num_stages: 4        # 1 encoder + 3 decoder stages
+  num_layers: 10       # attention blocks per stage — receptive field grows with dilation
+  d_model: 64          # internal dimension (must be divisible by n_heads)
+  n_heads: 8           # attention heads
+  input_dim: 2048      # ResNet50 feature dimension
+  dropout: 0.1         # lower than MS-TCN — attention already regularises
+
+dataset:
+  class_names: [
+    "Capsule_polishing", "Corneal_hydration", "Hydrodissection",
+    "Incision", "Irrigation_and_aspiration",
+    "Lens_implant_settingup", "Others", "Phacoemulsification", "Rhexis",
+    "Tonifying_and_antibiotics", "Viscous_agent_injection",
+    "Viscous_agent_removal", "Wound_hydration"
+  ]
+  train:
+    params:
+      root: "/home/helena/UCL_video_cataract/features/train/"
+  val:
+    params:
+      root: "/home/helena/UCL_video_cataract/features/val/"
+
+loss:
+  lambda_smoothing: 0.05   # optimal d'après le sweep MS-TCN
+  tau: 4.0
+  label_smoothing: 0.1
+  use_class_weights: true
+  focal_gamma: 0.0
+
+optimizer:
+  target: torch.optim.AdamW
+  params:
+    lr: 1e-4             # plus faible que MS-TCN — attention est sensible au LR
+    weight_decay: 1e-3
+
+lr_scheduler:
+  params:
+    n_warmup_steps: 200  # plus de warmup pour les couches d'attention
+    n_total_steps: 13000 # ~200 epochs × 65 videos
+    min_lr_ratio: 0.01
+
+metrics:
+  others_classes: ["Others"]
+
+train:
+  epochs: 200
+  device: "cuda:0"
+  use_amp: false
+  max_norm: 1.0
+  log_every_n_steps: 5
+  val_every_n_epoch: 1
+  keep_ckpt: 3
+  feature_noise_std: 0.1

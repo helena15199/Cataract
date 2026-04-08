@@ -6,6 +6,8 @@ import torchvision.models as tv_models
 from .cataract_predictor import CataractPredictor
 from .mstcn import MSTCNPlusPlus, instantiate_mstcn
 from .e2e_model import E2ETemporalModel, instantiate_e2e_model
+from .asformer import ASFormer, instantiate_asformer
+from .tecno import TeCNO, instantiate_tecno
 
 RESNET_VARIANTS = {
     "resnet18":  (tv_models.resnet18,  tv_models.ResNet18_Weights.DEFAULT),
@@ -50,6 +52,12 @@ def instantiate_model(model_config: DictConfig | dict) -> nn.Module:
 
     if name == "e2e":
         return instantiate_e2e_model(model_config)
+
+    if name == "asformer":
+        return instantiate_asformer(model_config)
+
+    if name == "tecno":
+        return instantiate_tecno(model_config)
 
     predictor_cls = PREDICTORS[name]
     num_classes = model_config.get("num_classes", 17)
