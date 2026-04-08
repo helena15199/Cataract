@@ -33,9 +33,9 @@ from omegaconf import OmegaConf
 # ---------------------------------------------------------------------------
 
 DEFAULT_LAMBDAS = [0.05, 0.15, 0.25, 0.30]
-DEFAULT_TAUS    = [3, 4]          # τ=5 crushes everything per paper — skip unless needed
-DEFAULT_LAYERS  = [8, 10, 12]
-DEFAULT_GAMMAS  = [0.0]           # 0 = standard CE; add 1.0 or 2.0 to test focal loss
+DEFAULT_TAUS    = [3, 4, 5]          # τ=5 crushes everything per paper — skip unless needed
+DEFAULT_LAYERS  = [8, 10, 12, 14]
+DEFAULT_GAMMAS  = [0.0, 1.0, 2.0]           # 0 = standard CE; add 1.0 or 2.0 to test focal loss
 
 
 # ---------------------------------------------------------------------------
