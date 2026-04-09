@@ -110,3 +110,35 @@ dataset_cataract/
 --- 
 
 Both scripts also print a summary of the dataset with the number of videos per split, the distribution of surgeon expertise (senior, junior, consultant) and the phase distribution across splits.
+
+---
+
+## Step 3 — Annotation Fix (IA / Capsule Polishing overlap)
+
+Some videos contain frames double-annotated as both `Irrigation_and_aspiration` and `Capsule_polishing` simultaneously. This creates duplicate image files per frame and corrupts training labels.
+
+`fix_annotation.py` resolves this for a given video by:
+1. **Duplicate frames**: deletes the image file and JSON entry for the wrong phase.
+2. **Alternating single-label frames**: reassigns the JSON label to the chosen phase.
+
+Only `labels.json` and the duplicate image files are modified — no other files are touched. A timestamped backup of `labels.json` is created automatically before any change.
+
+```bash
+# Dry run — see what would change without modifying anything
+python datasets/fix_annotation.py \
+    --video "Video 32 (cat144)" \
+    --phase "Capsule_polishing" \
+    --dry_run
+
+# Apply
+python datasets/fix_annotation.py \
+    --video "Video 32 (cat144)" \
+    --phase "Capsule_polishing"
+```
+
+Arguments:
+- `--video` : video name as it appears in `labels.json` (e.g. `"Video 32 (cat144)"`)
+- `--phase` : phase to keep — either `Irrigation_and_aspiration` or `Capsule_polishing`
+- `--dry_run` : print changes without applying them
+
+**24 videos** are affected by this issue (across train/val/test splits). Run the script once per video after receiving the annotation decision from the clinical expert.
