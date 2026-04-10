@@ -70,7 +70,7 @@ def process_folder(folder_path, fps_target, mapping, corrupted_frames, remaining
         return
 
     if video_number not in mapping:
-        print(f"Warning: Video {video_number} not found in Excel, skipping)
+        print(f"Warning: Video {video_number} not found in Excel, skipping")
         return
 
     video_id = mapping[video_number]
