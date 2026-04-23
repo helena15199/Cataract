@@ -135,12 +135,12 @@ def run_inference(model, dataloader, device, use_amp):
     model.eval()
     all_probs, all_labels, all_paths = [], [], []
 
-    for images, labels, paths in tqdm.tqdm(dataloader, desc="Inference"):
+    for images, labels, _, paths in tqdm.tqdm(dataloader, desc="Inference"):
         images = images.to(device, non_blocking=True)
         images = normalize_image(images)
         with autocast(device_type="cuda", enabled=use_amp):
-            logits = model(images)
-        probs = F.softmax(logits.float(), dim=1).cpu()
+            phase_logits, _ = model(images)
+        probs = F.softmax(phase_logits.float(), dim=1).cpu()
         all_probs.append(probs)
         all_labels.append(labels)
         all_paths.extend(paths)

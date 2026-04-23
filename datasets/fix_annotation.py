@@ -48,6 +48,9 @@ def main():
                         help="Phase à garder")
     parser.add_argument("--dry_run", action="store_true",
                         help="Affiche les changements sans rien modifier")
+    parser.add_argument("--alternating_only", action="store_true",
+                        help="Step 2 : réassigne uniquement les frames dans la zone d'alternance "
+                             "(avant la dernière frame de --phase), pas la section stable après")
     args = parser.parse_args()
 
     other_phase = CP if args.phase == IA else IA
@@ -94,15 +97,47 @@ def main():
     # ---------------------------------------------------------------
     # Step 2 — Alternating single-label frames
     # ---------------------------------------------------------------
-    # After removing duplicates, find remaining frames labeled as other_phase
-    remaining_other = {
-        k: v for k, v in video_keys.items()
-        if v == other_phase and k not in json_keys_to_del
-    }
+    # After removing duplicates, find the last frame still labeled as args.phase
+    # (= the boundary of the stable zone). CP frames beyond that boundary are
+    # stable and must NOT be touched; only those before it are alternating noise.
+    if args.alternating_only:
+        remaining_phase_frames = [
+            frame_number(k) for k, v in video_keys.items()
+            if v == args.phase and k not in json_keys_to_del
+        ]
+        last_phase_frame = max(remaining_phase_frames) if remaining_phase_frames else 0
+        # Also consider IA frames from duplicates that will be kept
+        kept_ia = [
+            frame_number(k) for k, v in video_keys.items()
+            if v == args.phase
+        ]
+        boundary = max(kept_ia) if kept_ia else 0
 
-    print(f"\n[Step 2] Frames alternantes à réassigner : {len(remaining_other)}")
-    for k in sorted(remaining_other):
-        print(f"  REASSIGN  {pathlib.Path(k).name}  →  {args.phase}")
+        remaining_other = {
+            k: v for k, v in video_keys.items()
+            if v == other_phase
+            and k not in json_keys_to_del
+            and frame_number(k) <= boundary
+        }
+        skipped = {
+            k: v for k, v in video_keys.items()
+            if v == other_phase
+            and k not in json_keys_to_del
+            and frame_number(k) > boundary
+        }
+        print(f"\n[Step 2] Boundary (dernière frame '{args.phase}') : Frame {boundary}")
+        print(f"[Step 2] Frames alternantes à réassigner (avant boundary) : {len(remaining_other)}")
+        for k in sorted(remaining_other):
+            print(f"  REASSIGN  {pathlib.Path(k).name}  →  {args.phase}")
+        print(f"[Step 2] Frames '{other_phase}' stables conservées (après boundary) : {len(skipped)}")
+    else:
+        remaining_other = {
+            k: v for k, v in video_keys.items()
+            if v == other_phase and k not in json_keys_to_del
+        }
+        print(f"\n[Step 2] Frames alternantes à réassigner : {len(remaining_other)}")
+        for k in sorted(remaining_other):
+            print(f"  REASSIGN  {pathlib.Path(k).name}  →  {args.phase}")
 
     # ---------------------------------------------------------------
     # Summary

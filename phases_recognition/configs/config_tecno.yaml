@@ -3,7 +3,7 @@ experiment_name: "tecno_v1.0_4stages_lstm256_bidir"
 
 model:
   name: tecno
-  num_classes: 13
+  num_classes: 12
   num_stages: 4          # 1 LSTM stage + 3 TCN refinement stages
   num_layers: 10         # dilated layers per TCN refinement stage
   num_f_maps: 32         # channels in TCN stages
@@ -15,7 +15,7 @@ model:
 
 dataset:
   class_names: [
-    "Capsule_polishing", "Corneal_hydration", "Hydrodissection",
+    "Capsule_polishing", "Hydrodissection",
     "Incision", "Irrigation_and_aspiration",
     "Lens_implant_settingup", "Others", "Phacoemulsification", "Rhexis",
     "Tonifying_and_antibiotics", "Viscous_agent_injection",

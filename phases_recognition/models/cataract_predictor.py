@@ -11,10 +11,9 @@ class CataractPredictor(nn.Module):
         self.final_size = final_size
 
         self.backbone = backbone
-
         self.fc_complete_number = nn.Linear(self.final_size, num_classes)
+        self.fc_binary = nn.Linear(self.final_size, 1)
 
-    def forward(self, image: torch.Tensor) -> torch.Tensor:
+    def forward(self, image: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         x = self.backbone(image)
-        complete = self.fc_complete_number(x)
-        return complete
+        return self.fc_complete_number(x), self.fc_binary(x).squeeze(1)

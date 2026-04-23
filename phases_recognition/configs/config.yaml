@@ -3,19 +3,20 @@ experiment_name: "cataract_v1.2_40ep_diffLR_smoothing"
 
 model:
   name: simple
-  num_classes: 13
+  num_classes: 12
   backbone:
     name: resnet50
     freeze: false
 
 dataset:
   class_names: [
-    "Capsule_polishing", "Corneal_hydration", "Hydrodissection",
+    "Capsule_polishing", "Hydrodissection",
     "Incision", "Irrigation_and_aspiration",
     "Lens_implant_settingup", "Others", "Phacoemulsification", "Rhexis",
     "Tonifying_and_antibiotics", "Viscous_agent_injection",
     "Viscous_agent_removal", "Wound_hydration"
   ]
+  binary_phase: "Corneal_hydration"
   others_classes: ["Malyugin_ring_insertion", "Malyugin_ring_removal", "Suture", "Trypan_blue_injection"]
   train:
     params:
@@ -79,7 +80,7 @@ visualizer:
   col: 8
   num_batch_to_take: 2
   class_names: [
-    "Capsule_polishing", "Corneal_hydration", "Hydrodissection",
+    "Capsule_polishing", "Hydrodissection",
     "Incision", "Irrigation_and_aspiration",
     "Lens_implant_settingup", "Others", "Phacoemulsification", "Rhexis",
     "Tonifying_and_antibiotics", "Viscous_agent_injection",

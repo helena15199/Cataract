@@ -29,15 +29,23 @@ def prepare_data(
     image_path: pathlib.Path,
     phase: str,
     class_to_idx: dict,
+    binary_phase: str,
     max_side: int = 64,
     transform_fn: Callable | None = None,
 ):
-    label = class_to_idx[phase]
+    is_binary = phase == binary_phase
+    phase_label = -1 if is_binary else class_to_idx[phase]
+
     image = basic_preprocess_image(str(image_path), max_side)
     if transform_fn is not None:
         image = transform_fn(image=image)["image"]
     image = einops.rearrange(image, "h w c -> c h w")
-    return image, torch.tensor(label, dtype=torch.long), str(image_path)
+    return (
+        image,
+        torch.tensor(phase_label, dtype=torch.long),
+        torch.tensor(float(is_binary), dtype=torch.float),
+        str(image_path),
+    )
 
 
 class ImageNumbersDataset(torch_data.Dataset):
@@ -49,14 +57,14 @@ class ImageNumbersDataset(torch_data.Dataset):
         transform_fn: Callable | None = None,
         seed: int = 42,
         others_classes: list[str] | None = None,
+        binary_phase: str | None = None,
     ):
         super().__init__()
         self.root = pathlib.Path(root)
         self.max_side = max_side
         self.transform_fn = transform_fn
+        self.binary_phase = binary_phase
         self.class_to_idx = {name: idx for idx, name in enumerate(class_names)}
-
-        # Remap des phases rares vers "Others"
         self.others_remap = {cls: "Others" for cls in (others_classes or [])}
 
         labels_json_path = self.root.parent / "labels.json"
@@ -83,14 +91,15 @@ class ImageNumbersDataset(torch_data.Dataset):
     def __getitem__(self, index: int):
         path = self.all_path_images[index]
         phase = self._get_phase(path)
-        image, label, path_str = prepare_data(
+        image, phase_label, ch_label, path_str = prepare_data(
             path,
             phase=phase,
             class_to_idx=self.class_to_idx,
+            binary_phase=self.binary_phase or "",
             max_side=self.max_side,
             transform_fn=self.transform_fn,
         )
-        return image, label, path_str
+        return image, phase_label, ch_label, path_str
 
 
 def build_transforms(transforms_config: DictConfig | dict | None) -> Callable | None:
@@ -101,15 +110,21 @@ def build_transforms(transforms_config: DictConfig | dict | None) -> Callable | 
 
 
 def build_weighted_sampler(dataset: ImageNumbersDataset) -> torch.utils.data.WeightedRandomSampler:
-    """Sampler qui équilibre les classes en sur-échantillonnant les rares."""
+    """Sampler qui équilibre les classes en sur-échantillonnant les rares.
+    Les frames binary_phase reçoivent le poids moyen (elles ne contribuent pas à la phase loss).
+    """
     num_classes = len(dataset.class_to_idx)
     counts = torch.zeros(num_classes)
     for path in dataset.all_path_images:
-        counts[dataset.class_to_idx[dataset._get_phase(path)]] += 1
+        phase = dataset._get_phase(path)
+        if phase != dataset.binary_phase:
+            counts[dataset.class_to_idx[phase]] += 1
 
     class_weights = 1.0 / counts.clamp(min=1)
+    mean_weight = class_weights.mean().item()
     sample_weights = torch.tensor([
-        class_weights[dataset.class_to_idx[dataset._get_phase(p)]].item()
+        mean_weight if dataset._get_phase(p) == dataset.binary_phase
+        else class_weights[dataset.class_to_idx[dataset._get_phase(p)]].item()
         for p in dataset.all_path_images
     ])
     return torch.utils.data.WeightedRandomSampler(
@@ -120,11 +135,15 @@ def build_weighted_sampler(dataset: ImageNumbersDataset) -> torch.utils.data.Wei
 
 
 def compute_class_weights(dataset: ImageNumbersDataset) -> torch.Tensor:
-    """Retourne un tenseur de weights inversement proportionnel à la fréquence de chaque classe."""
+    """Retourne un tenseur de weights inversement proportionnel à la fréquence de chaque classe.
+    Ignore les frames binary_phase (pas dans la phase loss).
+    """
     num_classes = len(dataset.class_to_idx)
     counts = torch.zeros(num_classes)
     for path in dataset.all_path_images:
-        counts[dataset.class_to_idx[dataset._get_phase(path)]] += 1
+        phase = dataset._get_phase(path)
+        if phase != dataset.binary_phase:
+            counts[dataset.class_to_idx[phase]] += 1
     weights = counts.sum() / (num_classes * counts.clamp(min=1))
     return weights
 
@@ -133,6 +152,7 @@ def instantiate_dataloader(
     split_config: DictConfig | dict,
     class_names: list[str],
     others_classes: list[str] | None = None,
+    binary_phase: str | None = None,
     use_sampler: bool = False,
 ) -> DataLoader:
     transform_fn = build_transforms(split_config.get("transforms"))
@@ -141,6 +161,7 @@ def instantiate_dataloader(
         class_names=class_names,
         transform_fn=transform_fn,
         others_classes=others_classes,
+        binary_phase=binary_phase,
     )
     loader_params = dict(split_config["loader_params"])
     if use_sampler:
@@ -154,6 +175,7 @@ def instantiate_loaders(
 ) -> tuple[DataLoader, DataLoader]:
     class_names = list(dataset_dict["class_names"])
     others_classes = list(dataset_dict.get("others_classes") or [])
-    train_loader = instantiate_dataloader(dataset_dict["train"], class_names, others_classes, use_sampler=True)
-    val_loader = instantiate_dataloader(dataset_dict["val"], class_names, others_classes, use_sampler=False)
+    binary_phase = dataset_dict.get("binary_phase") or None
+    train_loader = instantiate_dataloader(dataset_dict["train"], class_names, others_classes, binary_phase, use_sampler=True)
+    val_loader = instantiate_dataloader(dataset_dict["val"], class_names, others_classes, binary_phase, use_sampler=False)
     return train_loader, val_loader

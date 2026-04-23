@@ -3,7 +3,7 @@ experiment_name: "mstcn_v1.5_best_lam0.05_L10_200ep"
 
 model:
   name: mstcn
-  num_classes: 13
+  num_classes: 12
   num_stages: 4       # 1 prediction stage + 3 refinement stages
   num_layers: 10      # dilated layers per stage — receptive field = 2^10 = 1024 frames
   num_f_maps: 32      # réduit de 64 → 32 pour limiter la capacité (65 vidéos train seulement)
@@ -12,7 +12,7 @@ model:
 
 dataset:
   class_names: [
-    "Capsule_polishing", "Corneal_hydration", "Hydrodissection",
+    "Capsule_polishing", "Hydrodissection",
     "Incision", "Irrigation_and_aspiration",
     "Lens_implant_settingup", "Others", "Phacoemulsification", "Rhexis",
     "Tonifying_and_antibiotics", "Viscous_agent_injection",

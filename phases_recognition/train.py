@@ -47,6 +47,7 @@ def main(config: dict | DictConfig | OmegaConf):
         [
             {"params": model.backbone.parameters(), "lr": backbone_lr},
             {"params": model.fc_complete_number.parameters()},
+            {"params": model.fc_binary.parameters()},
         ],
         **opt_params,
     )

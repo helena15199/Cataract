@@ -1,4 +1,4 @@
-"""MS-TCN++ (Li et al. 2020) for temporal action segmentation.
+"""MS-TCN++ for temporal action segmentation
 
 Architecture:
   MultiStageModel
@@ -9,9 +9,6 @@ Architecture:
 Input:  (B, T, input_dim)  — one video at a time, B=1 in practice
 Output: list of (B, num_classes, T), one tensor per stage
 
-References:
-  MS-TCN:   Farha & Gall, CVPR 2019
-  MS-TCN++: Li et al., TPAMI 2020
 """
 
 import torch

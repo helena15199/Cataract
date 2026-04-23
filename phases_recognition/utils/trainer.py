@@ -70,17 +70,23 @@ class CataractTrainer:
         self.visualizer.writer = self.writer
 
     def run_step(
-        self, images: torch.Tensor, labels: torch.Tensor
-    ) -> tuple[torch.Tensor, dict, torch.Tensor]:
+        self,
+        images: torch.Tensor,
+        phase_labels: torch.Tensor,
+        binary_labels: torch.Tensor,
+    ) -> tuple[torch.Tensor, dict, torch.Tensor, torch.Tensor]:
         images = images.to(self.device, non_blocking=True)
-        labels = labels.to(self.device)
+        phase_labels = phase_labels.to(self.device)
+        binary_labels = binary_labels.to(self.device)
         images = normalize_image(images)
 
         with autocast(device_type="cuda", enabled=self.use_amp):
-            logits = self.model(images)
-            final_loss, loss_dict = self.loss_fn(logits, labels)
+            phase_logits, binary_logits = self.model(images)
+            final_loss, loss_dict = self.loss_fn(
+                phase_logits, binary_logits, phase_labels, binary_labels
+            )
 
-        return final_loss, loss_dict, logits
+        return final_loss, loss_dict, phase_logits, binary_logits
 
     def run_epoch(
         self,
@@ -99,10 +105,12 @@ class CataractTrainer:
         pbar = tqdm.tqdm(
             enumerate(dataloader), total=len(dataloader), desc=f"{tag} {epoch=}"
         )
-        for i, (images, labels, paths) in pbar:
+        for i, (images, phase_labels, binary_labels, paths) in pbar:
             if tag == "train":
                 self.optimizer.zero_grad(set_to_none=True)
-                final_loss, loss_dict, logits = self.run_step(images, labels)
+                final_loss, loss_dict, phase_logits, binary_logits = self.run_step(
+                    images, phase_labels, binary_labels
+                )
                 if torch.isnan(final_loss):
                     logger.error("Loss is nan, skip this batch.")
                     continue
@@ -116,9 +124,11 @@ class CataractTrainer:
                 self.scheduler.step()
             else:
                 with torch.no_grad():
-                    final_loss, loss_dict, logits = self.run_step(images, labels)
+                    final_loss, loss_dict, phase_logits, binary_logits = self.run_step(
+                        images, phase_labels, binary_labels
+                    )
 
-            self.metrics_fn.update(logits, labels)
+            self.metrics_fn.update(phase_logits, phase_labels)
 
             if epoch % self.log_image_every_n_epoch == 0:
                 self.visualizer(
