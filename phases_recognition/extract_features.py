@@ -59,17 +59,21 @@ def main(args):
     device = torch.device(args.device)
     max_side = config.dataset.train.params.max_side
 
-    # --- Load model and keep only the backbone ---
+    # --- Load model ---
     model = instantiate_model(config.model)
     checkpoint = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
     model.load_state_dict(checkpoint["model_state_dict"])
-    backbone = model.backbone  # ResNet without FC head
-    backbone.eval().to(device)
+    model.eval().to(device)
+    backbone   = model.backbone
+    fc_binary  = model.fc_binary
 
     # --- Build class mapping (same logic as ImageNumbersDataset) ---
     class_names = list(config.dataset.class_names)
     others_classes = list(config.dataset.get("others_classes") or [])
+    binary_phase = config.dataset.get("binary_phase") or None
     class_to_idx = {name: idx for idx, name in enumerate(class_names)}
+    if binary_phase:
+        class_to_idx[binary_phase] = -1
     others_remap = {cls: "Others" for cls in others_classes}
 
     with open(dataset_root / "labels.json") as f:
@@ -117,18 +121,23 @@ def main(args):
             pin_memory=True,
         )
 
-        features_list = []
+        features_list, binary_preds_list = [], []
         with torch.no_grad():
             for batch in loader:
                 batch = batch.to(device, non_blocking=True)
                 batch = normalize_image(batch)
-                feats = backbone(batch)  # (B, 2048)
+                feats = backbone(batch)                          # (B, 2048)
+                binary_logits = fc_binary(feats).squeeze(1)     # (B,)
+                binary_preds  = (binary_logits > 0).cpu().numpy().astype(np.int8)
                 features_list.append(feats.cpu().numpy())
+                binary_preds_list.append(binary_preds)
 
-        features = np.concatenate(features_list, axis=0)  # (T, 2048)
+        features     = np.concatenate(features_list,     axis=0)  # (T, 2048)
+        binary_preds = np.concatenate(binary_preds_list, axis=0)  # (T,)
 
-        np.save(out_dir / f"{video}.npy", features)
-        np.save(out_dir / f"{video}_labels.npy", labels)
+        np.save(out_dir / f"{video}.npy",              features)
+        np.save(out_dir / f"{video}_labels.npy",       labels)
+        np.save(out_dir / f"{video}_binary_ch.npy",    binary_preds)
 
     print(f"\nDone. Features saved to {output_dir}")
     print("Structure:")

@@ -183,39 +183,44 @@ def _draw_bars(ax, sequences: list[tuple[list[int], str]], colors, n_frames):
                 start = i
 
 
+PHASE_COLORS = [
+    "#90EE90",  # vert clair
+    "#228B22",  # vert foncé
+    "#ADD8E6",  # bleu très clair
+    "#00008B",  # bleu foncé
+    "#E74C3C",  # rouge
+    "#F1C40F",  # jaune
+    "#808080",  # gris
+    "#8B4513",  # marron
+    "#E67E22",  # orange
+    "#8E44AD",  # violet
+    "#FF69B4",  # rose
+    "#111111",  # noir
+]
+
+
 def plot_phase_timeline(
     video_results_raw: list[tuple[list[int], list[int], str]],
-    video_results_smooth: list[tuple[list[int], list[int], str]],
     class_names: list[str],
     out_path: pathlib.Path,
-    smooth_window: int,
 ):
-    n_classes = len(class_names)
-    cmap      = matplotlib.colormaps.get_cmap("tab20")
-    colors    = [cmap(i / max(n_classes - 1, 1)) for i in range(n_classes)]
-    n_videos  = len(video_results_raw)
-    has_smooth = smooth_window > 1
-
-    n_bars = 3 if has_smooth else 2
-    bar_labels = ["GT", "Raw", f"Smooth (w={smooth_window})"] if has_smooth else ["GT", "Raw"]
+    n_classes  = len(class_names)
+    colors     = PHASE_COLORS[:n_classes]
+    n_videos   = len(video_results_raw)
+    bar_labels = ["GT", "Pred"]
 
     fig, axes = plt.subplots(n_videos, 1,
-                             figsize=(14, n_videos * (0.5 * n_bars + 0.4) + 1.5),
+                             figsize=(14, n_videos * 1.2 + 1.5),
                              squeeze=False)
 
-    for row, ((gt_seq, pred_raw, video_name), (_, pred_smooth, _)) in enumerate(
-        zip(video_results_raw, video_results_smooth)
-    ):
+    for row, (gt_seq, pred_raw, video_name) in enumerate(video_results_raw):
         ax = axes[row, 0]
         n_frames = len(gt_seq)
-        seqs = [(gt_seq, "GT"), (pred_raw, "Raw")]
-        if has_smooth:
-            seqs.append((pred_smooth, bar_labels[2]))
-        _draw_bars(ax, seqs, colors, n_frames)
+        _draw_bars(ax, [(gt_seq, "GT"), (pred_raw, "Pred")], colors, n_frames)
 
         ax.set_xlim(0, 1)
-        ax.set_ylim(-0.5, n_bars - 0.5)
-        ax.set_yticks(range(n_bars))
+        ax.set_ylim(-0.5, 1.5)
+        ax.set_yticks([0, 1])
         ax.set_yticklabels(bar_labels, fontsize=7)
         ax.set_xticks([])
         ax.set_title(video_name, loc="left", fontsize=8, pad=2)
@@ -226,8 +231,66 @@ def plot_phase_timeline(
     fig.legend(handles, class_names,
                loc="lower center", ncol=min(n_classes, 7),
                fontsize=7, bbox_to_anchor=(0.5, 0), frameon=False)
-    fig.suptitle("Phase timeline — GT / Raw / Smoothed (test set)", fontsize=11, y=1.0)
+    fig.suptitle("Phase timeline — GT vs Predicted (test set)", fontsize=11, y=1.0)
     fig.tight_layout(rect=[0, 0.06, 1, 1])
+    fig.savefig(out_path, dpi=100, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  Saved: {out_path.name}")
+
+
+def plot_binary_ch_timeline(
+    video_results_raw: list[tuple[list[int], list[int], str]],
+    test_root: pathlib.Path,
+    out_path: pathlib.Path,
+):
+    """One bar per video: GT CH (label=-1) vs predicted CH (from _binary_ch.npy)."""
+    color_0 = "#4C9BE8"   # bleu  — non CH
+    color_1 = "#E8734C"   # rouge — CH
+
+    n_videos = len(video_results_raw)
+    fig, axes = plt.subplots(n_videos, 1,
+                             figsize=(14, n_videos * 1.0 + 1.5),
+                             squeeze=False)
+
+    for row, (gt_phase_seq, _, video_name) in enumerate(video_results_raw):
+        ax = axes[row, 0]
+
+        # GT binary: frames where original label was -1 (before masking) — reload from file
+        label_file = test_root / f"{video_name}_labels.npy"
+        ch_file    = test_root / f"{video_name}_binary_ch.npy"
+
+        gt_labels_full = np.load(label_file)          # includes -1 for CH
+        gt_binary  = (gt_labels_full == -1).astype(int).tolist()
+        pred_binary = np.load(ch_file).tolist() if ch_file.exists() else [0] * len(gt_binary)
+
+        n_frames = len(gt_binary)
+        seqs = [(gt_binary, "GT CH"), (pred_binary, "Pred CH")]
+        for bar_idx, (seq, _) in enumerate(seqs):
+            start = 0
+            for i in range(1, n_frames + 1):
+                if i == n_frames or seq[i] != seq[start]:
+                    left  = start / n_frames
+                    width = (i - start) / n_frames
+                    color = color_1 if seq[start] == 1 else color_0
+                    ax.barh(bar_idx, width, left=left, color=color, height=0.8, align="center")
+                    start = i
+
+        ax.set_xlim(0, 1)
+        ax.set_ylim(-0.5, 1.5)
+        ax.set_yticks([0, 1])
+        ax.set_yticklabels(["GT CH", "Pred CH"], fontsize=7)
+        ax.set_xticks([])
+        ax.set_title(video_name, loc="left", fontsize=8, pad=2)
+        for spine in ["top", "right", "bottom"]:
+            ax.spines[spine].set_visible(False)
+
+    handles = [plt.Rectangle((0, 0), 1, 1, color=color_0),
+               plt.Rectangle((0, 0), 1, 1, color=color_1)]
+    fig.legend(handles, ["Non Corneal_hydration", "Corneal_hydration"],
+               loc="lower center", ncol=2, fontsize=8,
+               bbox_to_anchor=(0.5, 0), frameon=False)
+    fig.suptitle("Binary Corneal Hydration — GT vs Predicted (test set)", fontsize=11, y=1.0)
+    fig.tight_layout(rect=[0, 0.04, 1, 1])
     fig.savefig(out_path, dpi=100, bbox_inches="tight")
     plt.close(fig)
     print(f"  Saved: {out_path.name}")
@@ -249,26 +312,21 @@ def plot_confusion_matrix(all_preds, all_labels, class_names,
 
 
 def plot_per_video_f1(video_f1s_raw: dict, video_f1s_smooth: dict, out_path: pathlib.Path):
-    names  = list(video_f1s_raw.keys())
-    raw    = [video_f1s_raw[n]    for n in names]
-    smooth = [video_f1s_smooth[n] for n in names]
-    order  = sorted(range(len(raw)), key=lambda i: raw[i])
-    names  = [names[i][:40] for i in order]
-    raw    = [raw[i]    for i in order]
-    smooth = [smooth[i] for i in order]
+    names = list(video_f1s_raw.keys())
+    raw   = [video_f1s_raw[n] for n in names]
+    order = sorted(range(len(raw)), key=lambda i: raw[i])
+    names = [names[i][:40] for i in order]
+    raw   = [raw[i] for i in order]
 
     y = np.arange(len(names))
     fig, ax = plt.subplots(figsize=(8, max(4, len(names) * 0.45)))
-    ax.barh(y - 0.2, raw,    height=0.35, color="#5b9bd5", label="Raw")
-    ax.barh(y + 0.2, smooth, height=0.35, color="#ed7d31", label="Smoothed")
+    ax.barh(y, raw, height=0.6, color="#5b9bd5", label="Pred")
     ax.set_yticks(y)
     ax.set_yticklabels(names, fontsize=8)
     ax.set_xlim(0, 1)
     ax.set_xlabel("F1 macro (frame-level)")
-    ax.axvline(x=np.mean(raw),    color="#5b9bd5", linestyle="--", linewidth=1)
-    ax.axvline(x=np.mean(smooth), color="#ed7d31", linestyle="--", linewidth=1)
-    ax.legend(fontsize=8)
-    ax.set_title("Per-video F1 macro — test set (raw vs smoothed)")
+    ax.axvline(x=np.mean(raw), color="#5b9bd5", linestyle="--", linewidth=1)
+    ax.set_title("Per-video F1 macro — test set")
     fig.tight_layout()
     fig.savefig(out_path, dpi=100, bbox_inches="tight")
     plt.close(fig)
@@ -291,7 +349,12 @@ def run_inference(model, test_root, device):
         stage_logits = model(features)
         last_logits  = stage_logits[-1].squeeze(0).T   # (T, C)
         preds = last_logits.argmax(dim=1).cpu().tolist()
-        results.append((labels.tolist(), preds, video_name))
+        gt = labels.tolist()
+        # Mask out binary-phase frames (label=-1) from GT and preds
+        mask = [i for i, l in enumerate(gt) if l != -1]
+        gt_clean   = [gt[i]   for i in mask]
+        pred_clean = [preds[i] for i in mask]
+        results.append((gt_clean, pred_clean, video_name))
     return results
 
 
@@ -325,47 +388,25 @@ def main(config_path: str, ckpt_path: str, out_dir: str, smooth_window: int):
     # Raw predictions
     video_results_raw = run_inference(model, test_root, device)
 
-    # Smoothed predictions
-    video_results_smooth = [
-        (gt, majority_vote_smooth(pred, smooth_window), name)
-        for gt, pred, name in video_results_raw
-    ]
-
     # Metrics
     raw_metrics, raw_vf1, raw_preds_flat, raw_labels_flat = compute_all_metrics(
         video_results_raw, num_classes, class_names, others_classes, prefix="raw")
-    smooth_metrics, smooth_vf1, smooth_preds_flat, _ = compute_all_metrics(
-        video_results_smooth, num_classes, class_names, others_classes, prefix="smoothed")
 
-    all_metrics = {**raw_metrics, **smooth_metrics}
+    all_metrics = {**raw_metrics}
 
     # Print
-    print(f"\n=== Test metrics (smooth_window={smooth_window}) ===")
-    print(f"{'Metric':<35} {'Raw':>8}  {'Smoothed':>10}")
-    print("-" * 58)
-    key_pairs = [
-        ("global/accuracy", "global/accuracy"),
-        ("global/f1_macro", "global/f1_macro"),
-        ("global/auroc", "global/auroc"),
-        ("segment/edit_score", "segment/edit_score"),
-        ("segment/f1@10", "segment/f1@10"),
-        ("segment/f1@25", "segment/f1@25"),
-        ("segment/f1@50", "segment/f1@50"),
-    ]
-    for key, _ in key_pairs:
-        r = raw_metrics.get(f"raw/{key}", float("nan"))
-        s = smooth_metrics.get(f"smoothed/{key}", float("nan"))
-        print(f"  {key:<33} {r:>8.4f}  {s:>10.4f}")
+    print(f"\n=== Test metrics ===")
+    for key in ["global/accuracy", "global/f1_macro", "global/auroc",
+                "segment/edit_score", "segment/f1@10", "segment/f1@25", "segment/f1@50"]:
+        v = raw_metrics.get(f"raw/{key}", float("nan"))
+        print(f"  {key:<33} {v:.4f}")
 
-    print("\nPer-class F1 (raw → smoothed):")
+    print("\nPer-class F1:")
     for c in class_names:
         if c in others_classes:
             continue
-        r = raw_metrics.get(f"raw/per_class/f1/{c}", 0.0)
-        s = smooth_metrics.get(f"smoothed/per_class/f1/{c}", 0.0)
-        delta = s - r
-        arrow = "↑" if delta > 0.01 else ("↓" if delta < -0.01 else "~")
-        print(f"  {c:<35} {r:.3f} → {s:.3f}  {arrow}")
+        v = raw_metrics.get(f"raw/per_class/f1/{c}", 0.0)
+        print(f"  {c:<35} {v:.3f}")
 
     with open(out_dir / "metrics.json", "w") as f:
         json.dump({k: round(v, 6) for k, v in all_metrics.items()}, f, indent=2)
@@ -373,15 +414,12 @@ def main(config_path: str, ckpt_path: str, out_dir: str, smooth_window: int):
 
     # Plots
     print("\nGenerating plots...")
-    plot_phase_timeline(video_results_raw, video_results_smooth,
-                        class_names, out_dir / "phase_timeline.png", smooth_window)
+    plot_phase_timeline(video_results_raw, class_names, out_dir / "phase_timeline.png")
+    plot_binary_ch_timeline(video_results_raw, test_root, out_dir / "binary_ch_timeline.png")
     plot_confusion_matrix(raw_preds_flat, raw_labels_flat, class_names, eval_indices,
-                          out_dir / "confusion_matrix_raw.png",
-                          "Confusion matrix — raw predictions (test set)")
-    plot_confusion_matrix(smooth_preds_flat, raw_labels_flat, class_names, eval_indices,
-                          out_dir / "confusion_matrix_smoothed.png",
-                          f"Confusion matrix — smoothed w={smooth_window} (test set)")
-    plot_per_video_f1(raw_vf1, smooth_vf1, out_dir / "per_video_f1.png")
+                          out_dir / "confusion_matrix.png",
+                          "Confusion matrix — predictions (test set)")
+    plot_per_video_f1(raw_vf1, {}, out_dir / "per_video_f1.png")
 
     print(f"\nDone. Résultats sauvegardés dans {out_dir}")
 

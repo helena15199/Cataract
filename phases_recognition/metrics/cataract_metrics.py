@@ -41,8 +41,8 @@ class CataractMetrics:
         gt = torch.cat(self.all_labels, dim=0)      # (N,)
         preds = probs.argmax(dim=1)
 
-        # Filtrer les samples des classes "Others" pour les métriques
-        mask = torch.ones(len(gt), dtype=torch.bool)
+        # Filtrer les frames CH (label=-1) et les classes "Others"
+        mask = gt >= 0
         for idx in self.others_indices:
             mask &= (gt != idx)
         gt_eval = gt[mask]

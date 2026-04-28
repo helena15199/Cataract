@@ -132,8 +132,8 @@ class CataractTrainer:
 
             if epoch % self.log_image_every_n_epoch == 0:
                 self.visualizer(
-                    logits,
-                    labels,
+                    phase_logits,
+                    phase_labels,
                     paths,
                     tag=tag,
                     batch_idx=i,

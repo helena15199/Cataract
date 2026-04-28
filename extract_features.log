@@ -1,0 +1,9 @@
+nohup: ignoring input
+Extracting features:   0%|          | 0/86 [00:00<?, ?it/s]Extracting features:   0%|          | 0/86 [00:00<?, ?it/s, video=Video 15_json_Video 15]Extracting features:   1%|          | 1/86 [00:21<30:26, 21.49s/it, video=Video 15_json_Video 15]Extracting features:   1%|          | 1/86 [00:21<30:26, 21.49s/it, video=Video 28 (cat127)_json_video 28 (cat127)]Extracting features:   1%|          | 1/86 [00:21<30:27, 21.50s/it, video=Video 28 (cat127)_json_video 28 (cat127)]
+Traceback (most recent call last):
+  File "/home/helena/Cataract/phases_recognition/extract_features.py", line 159, in <module>
+    main(args)
+    ~~~~^^^^^^
+  File "/home/helena/Cataract/phases_recognition/extract_features.py", line 105, in main
+    raise ValueError(f"Unknown phase '{phase}' in {k}. Known: {list(class_to_idx)}")
+ValueError: Unknown phase 'Corneal_hydration' in test/Video 28 (cat127)_json_video 28 (cat127)/Video_Video_28_cat127_Frame_001088_Phase_Corneal_hydration.png. Known: ['Capsule_polishing', 'Hydrodissection', 'Incision', 'Irrigation_and_aspiration', 'Lens_implant_settingup', 'Others', 'Phacoemulsification', 'Rhexis', 'Tonifying_and_antibiotics', 'Viscous_agent_injection', 'Viscous_agent_removal', 'Wound_hydration']

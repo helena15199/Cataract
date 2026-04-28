@@ -1,5 +1,5 @@
 root_dir: "/home/helena/experiments_cataract/"
-experiment_name: "cataract_v1.2_40ep_diffLR_smoothing"
+experiment_name: "cataract_v1.3_annotations_corrected"
 
 model:
   name: simple
@@ -91,7 +91,7 @@ metrics:
   others_classes: ["Others"]
 
 train:
-  epochs: 40
+  epochs: 100
   device: "cuda:0"
   use_amp: true
   max_norm: 1.0

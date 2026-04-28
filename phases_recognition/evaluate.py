@@ -78,7 +78,7 @@ def plot_phase_timeline(
         ax.set_xlim(0, 1)
         ax.set_ylim(-0.5, 1.5)
         ax.set_yticks([0, 1])
-        ax.set_yticklabels(["Pred", "GT"], fontsize=8)
+        ax.set_yticklabels(["GT", "Pred"], fontsize=8)
         ax.set_xticks([])
         ax.set_title(video_name, loc="left", fontsize=9, pad=2)
         for spine in ["top", "right", "bottom"]:
@@ -172,7 +172,8 @@ def main(config_path: str, ckpt_path: str, out_dir: str):
     )
     class_names = list(config.dataset.class_names)
     others_classes = list(config.dataset.get("others_classes") or [])
-    test_loader = instantiate_dataloader(test_config, class_names, others_classes, use_sampler=False)
+    binary_phase = config.dataset.get("binary_phase") or None
+    test_loader = instantiate_dataloader(test_config, class_names, others_classes, binary_phase, use_sampler=False)
 
     # Inférence
     probs, labels, paths = run_inference(model, test_loader, device, config.train.use_amp)
