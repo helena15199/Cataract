@@ -1,5 +1,5 @@
 root_dir: "/home/helena/experiments_cataract/"
-experiment_name: "cataract_v1.3_annotations_corrected"
+experiment_name: "cataract_v1.7_dataset_final_update"
 
 model:
   name: simple
@@ -17,7 +17,7 @@ dataset:
     "Viscous_agent_removal", "Wound_hydration"
   ]
   binary_phase: "Corneal_hydration"
-  others_classes: ["Malyugin_ring_insertion", "Malyugin_ring_removal", "Suture", "Trypan_blue_injection"]
+  others_classes: ["Malyugin_ring_insertion", "Malyugin_ring_removal", "Suture", "Trypan_blue_injection", "Iris_manipulation"]
   train:
     params:
       root: "/home/helena/UCL_video_cataract/dataset_temporal/train/"

@@ -138,7 +138,7 @@ def compute_all_metrics(
     edit_scores, f1_10, f1_25, f1_50 = [], [], [], []
     video_f1s = {}
 
-    for gt_seq, pred_seq, video_name in video_results:
+    for gt_seq, pred_seq, *_rest, video_name in video_results:
         t = len(gt_seq)
         dummy = torch.zeros(t, num_classes)
         dummy[range(t), pred_seq] = 10.0
@@ -184,54 +184,73 @@ def _draw_bars(ax, sequences: list[tuple[list[int], str]], colors, n_frames):
 
 
 PHASE_COLORS = [
-    "#90EE90",  # vert clair
-    "#228B22",  # vert foncé
-    "#ADD8E6",  # bleu très clair
-    "#00008B",  # bleu foncé
-    "#E74C3C",  # rouge
-    "#F1C40F",  # jaune
-    "#808080",  # gris
-    "#8B4513",  # marron
-    "#E67E22",  # orange
-    "#8E44AD",  # violet
-    "#FF69B4",  # rose
-    "#111111",  # noir
+    "#4E79A7",  # bleu acier
+    "#F28E2B",  # orange
+    "#E15759",  # rouge
+    "#76B7B2",  # teal
+    "#59A14F",  # vert
+    "#EDC948",  # jaune doré
+    "#B07AA1",  # violet
+    "#FF9DA7",  # rose saumon
+    "#9C755F",  # marron
+    "#BAB0AC",  # gris chaud
+    "#499894",  # teal foncé
+    "#D37295",  # rose foncé
 ]
 
 
 def plot_phase_timeline(
-    video_results_raw: list[tuple[list[int], list[int], str]],
+    video_results_raw: list,
     class_names: list[str],
     out_path: pathlib.Path,
 ):
     n_classes  = len(class_names)
     colors     = PHASE_COLORS[:n_classes]
     n_videos   = len(video_results_raw)
-    bar_labels = ["GT", "Pred"]
 
     fig, axes = plt.subplots(n_videos, 1,
-                             figsize=(14, n_videos * 1.2 + 1.5),
+                             figsize=(14, n_videos * 1.4 + 1.5),
                              squeeze=False)
 
-    for row, (gt_seq, pred_raw, video_name) in enumerate(video_results_raw):
+    for row, (gt_seq, pred_seq, conf_seq, video_name) in enumerate(video_results_raw):
         ax = axes[row, 0]
         n_frames = len(gt_seq)
-        _draw_bars(ax, [(gt_seq, "GT"), (pred_raw, "Pred")], colors, n_frames)
+
+        # GT (y=1) et Pred (y=0) — barres normales
+        _draw_bars(ax, [(gt_seq, "GT"), (pred_seq, "Pred")], colors, n_frames)
+
+        # Fine barre d'erreur (y=-0.6) : rouge, intensité = confiance, invisible si correct
+        start = 0
+        for i in range(1, n_frames + 1):
+            is_last = i == n_frames
+            wrong_now = pred_seq[start] != gt_seq[start]
+            next_same = not is_last and pred_seq[i] == pred_seq[start] and gt_seq[i] == gt_seq[start]
+            if is_last or not next_same:
+                if wrong_now:
+                    avg_conf = sum(conf_seq[start:i]) / (i - start)
+                    # bleu (peu confiant) → rouge (très confiant)
+                    r = avg_conf
+                    b = 1.0 - avg_conf
+                    ax.barh(-0.6, (i - start) / n_frames, left=start / n_frames,
+                            color=(r, 0.0, b), height=0.2, align="center")
+                start = i
 
         ax.set_xlim(0, 1)
-        ax.set_ylim(-0.5, 1.5)
-        ax.set_yticks([0, 1])
-        ax.set_yticklabels(bar_labels, fontsize=7)
+        ax.set_ylim(-0.8, 1.5)
+        ax.set_yticks([-0.6, 0, 1])
+        ax.set_yticklabels(["Err", "GT", "Pred"], fontsize=7)
         ax.set_xticks([])
         ax.set_title(video_name, loc="left", fontsize=8, pad=2)
         for spine in ["top", "right", "bottom"]:
             ax.spines[spine].set_visible(False)
 
     handles = [plt.Rectangle((0, 0), 1, 1, color=colors[i]) for i in range(n_classes)]
-    fig.legend(handles, class_names,
-               loc="lower center", ncol=min(n_classes, 7),
+    handles += [plt.Rectangle((0, 0), 1, 1, color=(0.0, 0.0, 1.0))]
+    handles += [plt.Rectangle((0, 0), 1, 1, color=(1.0, 0.0, 0.0))]
+    fig.legend(handles, class_names + ["Erreur peu confiante", "Erreur très confiante"],
+               loc="lower center", ncol=min(n_classes + 1, 7),
                fontsize=7, bbox_to_anchor=(0.5, 0), frameon=False)
-    fig.suptitle("Phase timeline — GT vs Predicted (test set)", fontsize=11, y=1.0)
+    fig.suptitle("Phase timeline — GT / Pred / Erreurs (test set)", fontsize=11, y=1.0)
     fig.tight_layout(rect=[0, 0.06, 1, 1])
     fig.savefig(out_path, dpi=100, bbox_inches="tight")
     plt.close(fig)
@@ -252,7 +271,7 @@ def plot_binary_ch_timeline(
                              figsize=(14, n_videos * 1.0 + 1.5),
                              squeeze=False)
 
-    for row, (gt_phase_seq, _, video_name) in enumerate(video_results_raw):
+    for row, (gt_phase_seq, *_rest, video_name) in enumerate(video_results_raw):
         ax = axes[row, 0]
 
         # GT binary: frames where original label was -1 (before masking) — reload from file
@@ -347,14 +366,17 @@ def run_inference(model, test_root, device):
     for features, labels, video_name in tqdm.tqdm(loader, desc="Inference"):
         features     = features.unsqueeze(0).to(device)
         stage_logits = model(features)
-        last_logits  = stage_logits[-1].squeeze(0).T   # (T, C)
-        preds = last_logits.argmax(dim=1).cpu().tolist()
+        last_logits  = stage_logits[-1].squeeze(0).T          # (T, C)
+        probs        = torch.softmax(last_logits, dim=1).cpu()
+        confidence   = probs.max(dim=1).values.tolist()       # (T,)
+        preds        = probs.argmax(dim=1).tolist()
+
         gt = labels.tolist()
-        # Mask out binary-phase frames (label=-1) from GT and preds
-        mask = [i for i, l in enumerate(gt) if l != -1]
-        gt_clean   = [gt[i]   for i in mask]
-        pred_clean = [preds[i] for i in mask]
-        results.append((gt_clean, pred_clean, video_name))
+        mask       = [i for i, l in enumerate(gt) if l != -1]
+        gt_clean   = [gt[i]         for i in mask]
+        pred_clean = [preds[i]      for i in mask]
+        conf_clean = [confidence[i] for i in mask]
+        results.append((gt_clean, pred_clean, conf_clean, video_name))
     return results
 
 
@@ -362,16 +384,16 @@ def run_inference(model, test_root, device):
 # Main
 # ---------------------------------------------------------------------------
 
-def main(config_path: str, ckpt_path: str, out_dir: str, smooth_window: int):
+def main(config_path: str, ckpt_path: str, out_dir: str, smooth_window: int, split: str = "test"):
     config  = OmegaConf.load(config_path)
     out_dir = pathlib.Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     device  = torch.device(config.train.device)
 
-    val_root  = pathlib.Path(config.dataset.val.params.root)
-    test_root = val_root.parent / "test"
-    if not test_root.exists():
-        raise FileNotFoundError(f"Test features not found at {test_root}.")
+    val_root   = pathlib.Path(config.dataset.val.params.root)
+    split_root = val_root.parent / split
+    if not split_root.exists():
+        raise FileNotFoundError(f"Features not found at {split_root}.")
 
     model = instantiate_model(config.model)
     state = torch.load(ckpt_path, map_location="cpu", weights_only=False)
@@ -386,7 +408,7 @@ def main(config_path: str, ckpt_path: str, out_dir: str, smooth_window: int):
     num_classes    = config.model.num_classes
 
     # Raw predictions
-    video_results_raw = run_inference(model, test_root, device)
+    video_results_raw = run_inference(model, split_root, device)
 
     # Metrics
     raw_metrics, raw_vf1, raw_preds_flat, raw_labels_flat = compute_all_metrics(
@@ -415,7 +437,7 @@ def main(config_path: str, ckpt_path: str, out_dir: str, smooth_window: int):
     # Plots
     print("\nGenerating plots...")
     plot_phase_timeline(video_results_raw, class_names, out_dir / "phase_timeline.png")
-    plot_binary_ch_timeline(video_results_raw, test_root, out_dir / "binary_ch_timeline.png")
+    plot_binary_ch_timeline(video_results_raw, split_root, out_dir / "binary_ch_timeline.png")
     plot_confusion_matrix(raw_preds_flat, raw_labels_flat, class_names, eval_indices,
                           out_dir / "confusion_matrix.png",
                           "Confusion matrix — predictions (test set)")
@@ -432,5 +454,7 @@ if __name__ == "__main__":
     parser.add_argument("--out_dir", type=str, required=True)
     parser.add_argument("--smooth_window", type=int, default=15,
                         help="Fenêtre majority-vote (0 = désactivé)")
+    parser.add_argument("--split", type=str, default="test",
+                        choices=["train", "val", "test"])
     args = parser.parse_args()
-    main(args.config, args.ckpt, args.out_dir, args.smooth_window)
+    main(args.config, args.ckpt, args.out_dir, args.smooth_window, args.split)
