@@ -1,5 +1,5 @@
 root_dir: "/home/helena/experiments_cataract/"
-experiment_name: "mstcn_v1.6_features_v1.3"
+experiment_name: "mstcn_v1.7_features_v1.7"
 
 model:
   name: mstcn
@@ -20,10 +20,10 @@ dataset:
   ]
   train:
     params:
-      root: "/home/helena/UCL_video_cataract/features_v1.3/train/"
+      root: "/home/helena/UCL_video_cataract/features_v1.7/train/"
   val:
     params:
-      root: "/home/helena/UCL_video_cataract/features_v1.3/val/"
+      root: "/home/helena/UCL_video_cataract/features_v1.7/val/"
 
 loss:
   lambda_smoothing: 0.05   # meilleure config du sweep
