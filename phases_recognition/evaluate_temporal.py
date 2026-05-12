@@ -203,6 +203,7 @@ def plot_phase_timeline(
     video_results_raw: list,
     class_names: list[str],
     out_path: pathlib.Path,
+    feat_root: pathlib.Path | None = None,
 ):
     n_classes  = len(class_names)
     colors     = PHASE_COLORS[:n_classes]
@@ -219,7 +220,7 @@ def plot_phase_timeline(
         # GT (y=1) et Pred (y=0) — barres normales
         _draw_bars(ax, [(gt_seq, "GT"), (pred_seq, "Pred")], colors, n_frames)
 
-        # Fine barre d'erreur (y=-0.6) : rouge, intensité = confiance, invisible si correct
+        # Fine barre d'erreur (y=-0.6)
         start = 0
         for i in range(1, n_frames + 1):
             is_last = i == n_frames
@@ -228,17 +229,42 @@ def plot_phase_timeline(
             if is_last or not next_same:
                 if wrong_now:
                     avg_conf = sum(conf_seq[start:i]) / (i - start)
-                    # bleu (peu confiant) → rouge (très confiant)
                     r = avg_conf
                     b = 1.0 - avg_conf
                     ax.barh(-0.6, (i - start) / n_frames, left=start / n_frames,
                             color=(r, 0.0, b), height=0.2, align="center")
                 start = i
 
+        # Barre OOD Mahalanobis (y=-1.0) si disponible
+        has_mahal = False
+        if feat_root is not None:
+            mahal_file = feat_root / f"{video_name}_mahal.npy"
+            if mahal_file.exists():
+                has_mahal = True
+                scores = np.load(mahal_file)  # (T_full,) including CH frames
+                # Align with masked sequence length
+                if len(scores) > n_frames:
+                    scores = scores[:n_frames]
+                # Normalize to [0,1]: higher score = more normal, lower = more OOD
+                s_min, s_max = scores.min(), scores.max()
+                if s_max > s_min:
+                    norm = (scores - s_min) / (s_max - s_min)
+                else:
+                    norm = np.zeros_like(scores)
+                # OOD intensity = 1 - norm (low score = high OOD = red)
+                cmap_ood = plt.cm.RdYlGn
+                for t in range(len(norm)):
+                    ax.barh(-1.0, 1 / len(norm), left=t / len(norm),
+                            color=cmap_ood(norm[t]), height=0.2, align="center")
+
+        ylim_bottom = -1.3 if has_mahal else -0.8
+        yticks = [-1.0, -0.6, 0, 1] if has_mahal else [-0.6, 0, 1]
+        ylabels = ["OOD", "Err", "GT", "Pred"] if has_mahal else ["Err", "GT", "Pred"]
+
         ax.set_xlim(0, 1)
-        ax.set_ylim(-0.8, 1.5)
-        ax.set_yticks([-0.6, 0, 1])
-        ax.set_yticklabels(["Err", "GT", "Pred"], fontsize=7)
+        ax.set_ylim(ylim_bottom, 1.5)
+        ax.set_yticks(yticks)
+        ax.set_yticklabels(ylabels, fontsize=7)
         ax.set_xticks([])
         ax.set_title(video_name, loc="left", fontsize=8, pad=2)
         for spine in ["top", "right", "bottom"]:
@@ -436,7 +462,8 @@ def main(config_path: str, ckpt_path: str, out_dir: str, smooth_window: int, spl
 
     # Plots
     print("\nGenerating plots...")
-    plot_phase_timeline(video_results_raw, class_names, out_dir / "phase_timeline.png")
+    plot_phase_timeline(video_results_raw, class_names, out_dir / "phase_timeline.png",
+                        feat_root=split_root)
     plot_binary_ch_timeline(video_results_raw, split_root, out_dir / "binary_ch_timeline.png")
     plot_confusion_matrix(raw_preds_flat, raw_labels_flat, class_names, eval_indices,
                           out_dir / "confusion_matrix.png",
