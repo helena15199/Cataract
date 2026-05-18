@@ -433,6 +433,11 @@ def main(config_path: str, ckpt_path: str, out_dir: str, smooth_window: int, spl
     eval_indices   = [i for i in range(len(class_names)) if i not in others_indices]
     num_classes    = config.model.num_classes
 
+    # Load labels.json pour la résolution des doublons CH
+    _labels_path = pathlib.Path(config.dataset.train.params.root).parent.parent / "labels.json"
+    with open(_labels_path) as _f:
+        _all_labels = json.load(_f)
+
     # Raw predictions
     video_results_raw = run_inference(model, split_root, device)
 
@@ -456,8 +461,56 @@ def main(config_path: str, ckpt_path: str, out_dir: str, smooth_window: int, spl
         v = raw_metrics.get(f"raw/per_class/f1/{c}", 0.0)
         print(f"  {c:<35} {v:.3f}")
 
+    # Binary CH metrics (séparées du global)
+    ch_metrics = {}
+    all_gt_ch, all_pred_ch = [], []
+    for *_, video_name in video_results_raw:
+        label_file = split_root / f"{video_name}_labels.npy"
+        ch_file    = split_root / f"{video_name}_binary_ch.npy"
+        if not label_file.exists() or not ch_file.exists():
+            continue
+        gt_labels_full = np.load(label_file)
+        pred_ch        = np.load(ch_file).astype(int)
+
+        # Reconstruire les numéros de frames pour propager CH aux doublons
+        _re = __import__('re')
+        _FRAME_RE = _re.compile(r"Frame_(\d+)")
+        _base = video_name.split("_json_")[0]
+        _keys = sorted(
+            [(int(_FRAME_RE.search(k).group(1)), k)
+             for k in _all_labels if _base in k and _FRAME_RE.search(k)],
+            key=lambda x: x[0]
+        )
+        _frame_nums = [fn for fn, _ in _keys]
+        if len(_frame_nums) == len(gt_labels_full):
+            _ch_frames = {_frame_nums[i] for i, l in enumerate(gt_labels_full) if l == -1}
+            gt_ch = np.array([1 if _frame_nums[i] in _ch_frames else 0
+                              for i in range(len(gt_labels_full))], dtype=int)
+        else:
+            gt_ch = (gt_labels_full == -1).astype(int)
+        all_gt_ch.extend(gt_ch.tolist())
+        all_pred_ch.extend(pred_ch.tolist())
+
+    if all_gt_ch:
+        from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
+        gt_arr   = np.array(all_gt_ch)
+        pred_arr = np.array(all_pred_ch)
+        ch_metrics = {
+            "ch_binary/accuracy":  round(float(accuracy_score(gt_arr, pred_arr)), 6),
+            "ch_binary/precision": round(float(precision_score(gt_arr, pred_arr, zero_division=0)), 6),
+            "ch_binary/recall":    round(float(recall_score(gt_arr, pred_arr, zero_division=0)), 6),
+            "ch_binary/f1":        round(float(f1_score(gt_arr, pred_arr, zero_division=0)), 6),
+        }
+        try:
+            ch_metrics["ch_binary/auroc"] = round(float(roc_auc_score(gt_arr, pred_arr)), 6)
+        except ValueError:
+            pass
+        print(f"\n=== Corneal Hydration binary metrics ===")
+        for k, v in ch_metrics.items():
+            print(f"  {k.replace('ch_binary/',''):<12} {v:.4f}")
+
     with open(out_dir / "metrics.json", "w") as f:
-        json.dump({k: round(v, 6) for k, v in all_metrics.items()}, f, indent=2)
+        json.dump({k: round(v, 6) for k, v in {**all_metrics, **ch_metrics}.items()}, f, indent=2)
     print(f"\n  Saved: metrics.json")
 
     # Plots

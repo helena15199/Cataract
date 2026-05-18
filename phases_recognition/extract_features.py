@@ -100,15 +100,18 @@ def main(args):
             key=lambda k: _extract_frame_number(pathlib.Path(k)),
         )
 
-        # Build label array
+        # Build label array and frame numbers
         label_list = []
+        frame_numbers = []
         for k in frame_keys_sorted:
             phase = all_labels[k]
             phase = others_remap.get(phase, phase)
             if phase not in class_to_idx:
                 raise ValueError(f"Unknown phase '{phase}' in {k}. Known: {list(class_to_idx)}")
             label_list.append(class_to_idx[phase])
-        labels = np.array(label_list, dtype=np.int64)  # (T,)
+            frame_numbers.append(_extract_frame_number(pathlib.Path(k)))
+        labels        = np.array(label_list,   dtype=np.int64)   # (T,)
+        frame_numbers = np.array(frame_numbers, dtype=np.int32)  # (T,)
 
         # Load frames and extract features
         frame_paths = [dataset_root / k for k in frame_keys_sorted]
