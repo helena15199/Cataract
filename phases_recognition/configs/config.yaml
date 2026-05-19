@@ -1,5 +1,5 @@
 root_dir: "/home/helena/experiments_cataract/"
-experiment_name: "cataract_v1.8_dataset_update_after_check_timelines"
+experiment_name: "cataract_v1.9_no_ch_ood_split"
 
 model:
   name: simple
@@ -16,8 +16,8 @@ dataset:
     "Tonifying_and_antibiotics", "Viscous_agent_injection",
     "Viscous_agent_removal", "Wound_hydration"
   ]
-  binary_phase: "Corneal_hydration"
-  others_classes: ["Malyugin_ring_insertion", "Malyugin_ring_removal", "Suture", "Trypan_blue_injection", "Iris_manipulation"]
+  labels_file: "labels_ood.json"
+  others_classes: ["Corneal_hydration", "Malyugin_ring_insertion", "Malyugin_ring_removal", "Suture", "Trypan_blue_injection", "Iris_manipulation"]
   train:
     params:
       root: "/home/helena/UCL_video_cataract/dataset_temporal/train/"

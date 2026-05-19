@@ -59,13 +59,12 @@ def main(args):
     device = torch.device(args.device)
     max_side = config.dataset.train.params.max_side
 
-    # --- Load model ---
+    # --- Load model and keep only the backbone ---
     model = instantiate_model(config.model)
     checkpoint = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
     model.load_state_dict(checkpoint["model_state_dict"])
     model.eval().to(device)
-    backbone   = model.backbone
-    fc_binary  = model.fc_binary
+    backbone = model.backbone
 
     # --- Build class mapping (same logic as ImageNumbersDataset) ---
     class_names = list(config.dataset.class_names)
@@ -124,23 +123,18 @@ def main(args):
             pin_memory=True,
         )
 
-        features_list, binary_preds_list = [], []
+        features_list = []
         with torch.no_grad():
             for batch in loader:
                 batch = batch.to(device, non_blocking=True)
                 batch = normalize_image(batch)
-                feats = backbone(batch)                          # (B, 2048)
-                binary_logits = fc_binary(feats).squeeze(1)     # (B,)
-                binary_preds  = (binary_logits > 0).cpu().numpy().astype(np.int8)
+                feats = backbone(batch)
                 features_list.append(feats.cpu().numpy())
-                binary_preds_list.append(binary_preds)
 
-        features     = np.concatenate(features_list,     axis=0)  # (T, 2048)
-        binary_preds = np.concatenate(binary_preds_list, axis=0)  # (T,)
+        features = np.concatenate(features_list, axis=0)  # (T, 2048)
 
-        np.save(out_dir / f"{video}.npy",              features)
-        np.save(out_dir / f"{video}_labels.npy",       labels)
-        np.save(out_dir / f"{video}_binary_ch.npy",    binary_preds)
+        np.save(out_dir / f"{video}.npy",        features)
+        np.save(out_dir / f"{video}_labels.npy", labels)
 
     print(f"\nDone. Features saved to {output_dir}")
     print("Structure:")

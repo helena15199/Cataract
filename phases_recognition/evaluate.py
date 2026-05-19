@@ -135,12 +135,12 @@ def run_inference(model, dataloader, device, use_amp):
     model.eval()
     all_probs, all_labels, all_paths = [], [], []
 
-    for images, labels, _, paths in tqdm.tqdm(dataloader, desc="Inference"):
+    for images, labels, paths in tqdm.tqdm(dataloader, desc="Inference"):
         images = images.to(device, non_blocking=True)
         images = normalize_image(images)
         with autocast(device_type="cuda", enabled=use_amp):
-            phase_logits, _ = model(images)
-        probs = F.softmax(phase_logits.float(), dim=1).cpu()
+            logits = model(images)
+        probs = F.softmax(logits.float(), dim=1).cpu()
         all_probs.append(probs)
         all_labels.append(labels)
         all_paths.extend(paths)
@@ -172,8 +172,8 @@ def main(config_path: str, ckpt_path: str, out_dir: str):
     )
     class_names = list(config.dataset.class_names)
     others_classes = list(config.dataset.get("others_classes") or [])
-    binary_phase = config.dataset.get("binary_phase") or None
-    test_loader = instantiate_dataloader(test_config, class_names, others_classes, binary_phase, use_sampler=False)
+    labels_file = config.dataset.get("labels_file", "labels.json")
+    test_loader = instantiate_dataloader(test_config, class_names, others_classes, labels_file, use_sampler=False)
 
     # Inférence
     probs, labels, paths = run_inference(model, test_loader, device, config.train.use_amp)

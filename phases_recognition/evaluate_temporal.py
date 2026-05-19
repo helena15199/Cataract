@@ -199,22 +199,38 @@ PHASE_COLORS = [
 ]
 
 
+def _smooth(arr: np.ndarray, window: int) -> np.ndarray:
+    kernel = np.ones(window) / window
+    return np.convolve(arr, kernel, mode='same')
+
+
 def plot_phase_timeline(
     video_results_raw: list,
     class_names: list[str],
     out_path: pathlib.Path,
     feat_root: pathlib.Path | None = None,
+    ood_threshold: float | None = None,
+    smooth_window: int = 20,
 ):
     n_classes  = len(class_names)
     colors     = PHASE_COLORS[:n_classes]
     n_videos   = len(video_results_raw)
+    has_ood    = feat_root is not None
 
-    fig, axes = plt.subplots(n_videos, 1,
-                             figsize=(14, n_videos * 1.4 + 1.5),
-                             squeeze=False)
+    # 2 subplots per video if OOD signal available, else 1
+    n_rows_per_video = 2 if has_ood else 1
+    height_ratios = [3, 1] * n_videos if has_ood else [1] * n_videos
+
+    fig, axes = plt.subplots(
+        n_videos * n_rows_per_video, 1,
+        figsize=(14, n_videos * (1.8 if has_ood else 1.4) + 1.5),
+        gridspec_kw={"height_ratios": height_ratios} if has_ood else {},
+        squeeze=False,
+    )
 
     for row, (gt_seq, pred_seq, conf_seq, video_name) in enumerate(video_results_raw):
-        ax = axes[row, 0]
+        ax_row = row * n_rows_per_video
+        ax = axes[ax_row, 0]
         n_frames = len(gt_seq)
 
         # GT (y=1) et Pred (y=0) — barres normales

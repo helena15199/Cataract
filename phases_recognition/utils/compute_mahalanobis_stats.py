@@ -77,11 +77,20 @@ def main(args):
     lw.fit(centered)
     precision = lw.precision_.astype(np.float32)  # (D, D) inverse covariance
 
+    # Compute OOD threshold on training in-distribution frames (5th percentile)
+    print("\nComputing OOD threshold on train set...")
+    from compute_mahalanobis_scores import mahalanobis_scores
+    valid_means = class_means[[i for i in range(n_classes) if i != others_idx]]
+    train_scores = mahalanobis_scores(features_id, valid_means, precision)
+    threshold = float(np.percentile(train_scores, 5))
+    print(f"  Threshold (5th percentile) : {threshold:.2f}")
+
     out_path = pathlib.Path(args.out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     np.savez(out_path, class_means=class_means, precision=precision,
-             class_names=np.array(class_names), class_counts=class_counts)
-    print(f"\nSaved: {out_path}")
+             class_names=np.array(class_names), class_counts=class_counts,
+             threshold=np.float32(threshold))
+    print(f"Saved: {out_path}")
 
 
 if __name__ == "__main__":
