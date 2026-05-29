@@ -257,6 +257,7 @@ def main(config: DictConfig):
         label_smoothing=config.loss.get("label_smoothing", 0.0),
         class_weights=class_weights,
         focal_gamma=config.loss.get("focal_gamma", 0.0),
+        logit_norm_tau=config.loss.get("logit_norm_tau", 0.0),
     )
 
     optimizer = getattr(torch.optim, config.optimizer.target.split(".")[-1])(

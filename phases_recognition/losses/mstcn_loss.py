@@ -124,14 +124,23 @@ class MSTCNLoss(nn.Module):
         class_weights:    optional (C,) tensor of per-class weights.
         focal_gamma:      if > 0, use focal loss instead of standard CE.
                           gamma=2 is a good default. 0 = standard CE.
+        logit_norm_tau:   if > 0, apply LogitNorm before CE loss.
+                          Normalises each frame's logit vector to unit L2 norm,
+                          then scales by 1/logit_norm_tau (temperature).
+                          This prevents the model from inflating logit magnitude
+                          to fake confidence, forcing OOD frames to have genuinely
+                          diffuse (high-entropy) predictions at inference.
+                          Recommended: 0.04–0.1. 0 = disabled (standard CE).
     """
 
     def __init__(self, lambda_smoothing: float = 0.15, tau: float = 4.0,
                  label_smoothing: float = 0.0,
                  class_weights: torch.Tensor | None = None,
-                 focal_gamma: float = 0.0):
+                 focal_gamma: float = 0.0,
+                 logit_norm_tau: float = 0.0):
         super().__init__()
         self.lambda_smoothing = lambda_smoothing
+        self.logit_norm_tau   = logit_norm_tau
 
         if focal_gamma > 0:
             self.ce = _FocalLoss(
@@ -148,6 +157,11 @@ class MSTCNLoss(nn.Module):
             )
 
         self.tmse = _TMSELoss(tau=tau)
+
+    def _normalize_logits(self, logits: torch.Tensor) -> torch.Tensor:
+        """Normalise logit vectors to unit L2 norm (along class dim), scaled by 1/tau."""
+        norm = logits.norm(p=2, dim=1, keepdim=True).clamp(min=1e-7)
+        return logits / (norm * self.logit_norm_tau)
 
     def forward(
         self,
@@ -170,9 +184,10 @@ class MSTCNLoss(nn.Module):
         tmse_sum   = targets.new_zeros((), dtype=torch.float32)
 
         for logits in stage_logits:
-            # CrossEntropyLoss accepts (B, C, T) vs (B, T) natively
-            ce   = self.ce(logits, targets)
-            smooth = self.tmse(F.log_softmax(logits, dim=1))
+            # Apply LogitNorm if enabled: normalise logit vector before CE
+            logits_for_ce = self._normalize_logits(logits) if self.logit_norm_tau > 0 else logits
+            ce     = self.ce(logits_for_ce, targets)
+            smooth = self.tmse(F.log_softmax(logits_for_ce, dim=1))
             total_loss = total_loss + ce + self.lambda_smoothing * smooth
             ce_sum     = ce_sum   + ce
             tmse_sum   = tmse_sum + smooth

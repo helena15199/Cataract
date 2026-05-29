@@ -196,7 +196,10 @@ PHASE_COLORS = [
     "#BAB0AC",  # gris chaud
     "#499894",  # teal foncé
     "#D37295",  # rose foncé
+    "#2D2D2D",  # gris foncé — OOD / phase inconnue
 ]
+
+OOD_LABEL = 12  # sentinel index used in GT for unseen phases (label -1 in features)
 
 
 def _smooth(arr: np.ndarray, window: int) -> np.ndarray:
@@ -204,43 +207,52 @@ def _smooth(arr: np.ndarray, window: int) -> np.ndarray:
     return np.convolve(arr, kernel, mode='same')
 
 
+def _segment_ood_signal(ood_signal: np.ndarray, pred_seq: list[int]) -> np.ndarray:
+    """Replace each frame's OOD score with the median over its predicted segment.
+    This gives a step-function view: whole segments appear as OOD or not, avoiding
+    single-frame noise, and directly answers 'is this PHASE anomalous?'
+    """
+    n = len(pred_seq)
+    out = np.zeros(n, dtype=np.float32)
+    segments = _get_segments(pred_seq)
+    for _, start, end in segments:
+        out[start:end] = np.median(ood_signal[start:end])
+    return out
+
+
 def plot_phase_timeline(
     video_results_raw: list,
     class_names: list[str],
     out_path: pathlib.Path,
-    feat_root: pathlib.Path | None = None,
     ood_threshold: float | None = None,
-    smooth_window: int = 20,
+    smooth_window: int = 50,
 ):
     n_classes  = len(class_names)
-    colors     = PHASE_COLORS[:n_classes]
+    # colors indexed 0..n_classes-1 for known phases + OOD_LABEL for unknown
+    colors = PHASE_COLORS[:n_classes] + ["#000000"] * (OOD_LABEL - n_classes) + [PHASE_COLORS[OOD_LABEL]]
     n_videos   = len(video_results_raw)
-    has_ood    = feat_root is not None
 
-    # 2 subplots per video if OOD signal available, else 1
-    n_rows_per_video = 2 if has_ood else 1
-    height_ratios = [3, 1] * n_videos if has_ood else [1] * n_videos
-
+    height_ratios = [3, 1] * n_videos
     fig, axes = plt.subplots(
-        n_videos * n_rows_per_video, 1,
-        figsize=(14, n_videos * (1.8 if has_ood else 1.4) + 1.5),
-        gridspec_kw={"height_ratios": height_ratios} if has_ood else {},
+        n_videos * 2, 1,
+        figsize=(14, n_videos * 1.8 + 1.5),
+        gridspec_kw={"height_ratios": height_ratios},
         squeeze=False,
     )
 
-    for row, (gt_seq, pred_seq, conf_seq, video_name) in enumerate(video_results_raw):
-        ax_row = row * n_rows_per_video
+    for row, (gt_seq, pred_seq, conf_seq, entropy_seq, video_name) in enumerate(video_results_raw):
+        ax_row = row * 2
         ax = axes[ax_row, 0]
         n_frames = len(gt_seq)
 
         # GT (y=1) et Pred (y=0) — barres normales
         _draw_bars(ax, [(gt_seq, "GT"), (pred_seq, "Pred")], colors, n_frames)
 
-        # Fine barre d'erreur (y=-0.6)
+        # Fine barre d'erreur (y=-0.6) — uniquement sur frames connues
         start = 0
         for i in range(1, n_frames + 1):
             is_last = i == n_frames
-            wrong_now = pred_seq[start] != gt_seq[start]
+            wrong_now = pred_seq[start] != gt_seq[start] and gt_seq[start] != OOD_LABEL
             next_same = not is_last and pred_seq[i] == pred_seq[start] and gt_seq[i] == gt_seq[start]
             if is_last or not next_same:
                 if wrong_now:
@@ -251,46 +263,47 @@ def plot_phase_timeline(
                             color=(r, 0.0, b), height=0.2, align="center")
                 start = i
 
-        # Barre OOD Mahalanobis (y=-1.0) si disponible
-        has_mahal = False
-        if feat_root is not None:
-            mahal_file = feat_root / f"{video_name}_mahal.npy"
-            if mahal_file.exists():
-                has_mahal = True
-                scores = np.load(mahal_file)  # (T_full,) including CH frames
-                # Align with masked sequence length
-                if len(scores) > n_frames:
-                    scores = scores[:n_frames]
-                # Normalize to [0,1]: higher score = more normal, lower = more OOD
-                s_min, s_max = scores.min(), scores.max()
-                if s_max > s_min:
-                    norm = (scores - s_min) / (s_max - s_min)
-                else:
-                    norm = np.zeros_like(scores)
-                # OOD intensity = 1 - norm (low score = high OOD = red)
-                cmap_ood = plt.cm.RdYlGn
-                for t in range(len(norm)):
-                    ax.barh(-1.0, 1 / len(norm), left=t / len(norm),
-                            color=cmap_ood(norm[t]), height=0.2, align="center")
-
-        ylim_bottom = -1.3 if has_mahal else -0.8
-        yticks = [-1.0, -0.6, 0, 1] if has_mahal else [-0.6, 0, 1]
-        ylabels = ["OOD", "Err", "GT", "Pred"] if has_mahal else ["Err", "GT", "Pred"]
-
         ax.set_xlim(0, 1)
-        ax.set_ylim(ylim_bottom, 1.5)
-        ax.set_yticks(yticks)
-        ax.set_yticklabels(ylabels, fontsize=7)
+        ax.set_ylim(-0.8, 1.5)
+        ax.set_yticks([-0.6, 0, 1])
+        ax.set_yticklabels(["Err", "GT", "Pred"], fontsize=7)
         ax.set_xticks([])
         ax.set_title(video_name, loc="left", fontsize=8, pad=2)
         for spine in ["top", "right", "bottom"]:
             ax.spines[spine].set_visible(False)
 
+        # OOD signal subplot — two views:
+        # 1) smooth curve (raw frame signal with gaussian blur)
+        # 2) step function (median per predicted segment — phase-level view)
+        ax_ood = axes[ax_row + 1, 0]
+        raw_signal = np.array(entropy_seq, dtype=np.float32)
+        smooth_sig  = _smooth(raw_signal, smooth_window)
+        segment_sig = _segment_ood_signal(raw_signal, pred_seq)
+        t = np.linspace(0, 1, n_frames)
+
+        ax_ood.fill_between(t, 0, smooth_sig, alpha=0.15, color="#E15759", zorder=1)
+        ax_ood.plot(t, smooth_sig, color="#E15759", linewidth=0.7, zorder=2, label="smooth")
+        ax_ood.step(t, segment_sig, color="#8B0000", linewidth=1.2, zorder=4,
+                    where="post", label="segment")
+        if ood_threshold is not None:
+            ax_ood.axhline(ood_threshold, color="black", linestyle="--",
+                           linewidth=1.0)
+            ax_ood.fill_between(t, ood_threshold, segment_sig,
+                                where=(segment_sig > ood_threshold),
+                                alpha=0.45, color="#8B0000", zorder=3)
+        ax_ood.set_xlim(0, 1)
+        ax_ood.set_xticks([])
+        ax_ood.set_ylabel("Mahal\n(OOD↑)", fontsize=6, rotation=0, labelpad=35, va="center")
+        ax_ood.tick_params(labelsize=5)
+        for spine in ["top", "right"]:
+            ax_ood.spines[spine].set_visible(False)
+
     handles = [plt.Rectangle((0, 0), 1, 1, color=colors[i]) for i in range(n_classes)]
+    handles += [plt.Rectangle((0, 0), 1, 1, color=PHASE_COLORS[OOD_LABEL])]
     handles += [plt.Rectangle((0, 0), 1, 1, color=(0.0, 0.0, 1.0))]
     handles += [plt.Rectangle((0, 0), 1, 1, color=(1.0, 0.0, 0.0))]
-    fig.legend(handles, class_names + ["Erreur peu confiante", "Erreur très confiante"],
-               loc="lower center", ncol=min(n_classes + 1, 7),
+    fig.legend(handles, class_names + ["Phase inconnue (OOD)", "Erreur peu confiante", "Erreur très confiante"],
+               loc="lower center", ncol=min(n_classes + 2, 7),
                fontsize=7, bbox_to_anchor=(0.5, 0), frameon=False)
     fig.suptitle("Phase timeline — GT / Pred / Erreurs (test set)", fontsize=11, y=1.0)
     fig.tight_layout(rect=[0, 0.06, 1, 1])
@@ -398,27 +411,96 @@ def plot_per_video_f1(video_f1s_raw: dict, video_f1s_smooth: dict, out_path: pat
 # Inference
 # ---------------------------------------------------------------------------
 
+def _mahal_ood_signal(features: np.ndarray, stats: dict) -> np.ndarray:
+    """Compute per-frame min-class Mahalanobis² OOD score.
+    Works for any feature dimension; uses an identity expansion to avoid
+    materialising the full (T, D) @ (D, D) @ (D, T) product per class.
+
+    Returns (T,) — higher = further from all class centroids = more OOD.
+    """
+    class_means = stats["class_means"].astype(np.float64)  # (C, D)
+    precision   = stats["precision"].astype(np.float64)    # (D, D)
+    features    = features.astype(np.float64)              # (T, D)
+    T, D = features.shape
+    C    = len(class_means)
+
+    # Precompute x @ P once — O(T × D²) but a single BLAS gemm, fast
+    xP   = features @ precision          # (T, D)
+    xPx  = (xP * features).sum(axis=1)  # (T,)  — quadratic term
+
+    min_dist2 = np.full(T, np.inf, dtype=np.float64)
+    for c in range(C):
+        mu = class_means[c]                          # (D,)
+        muPmu = float(mu @ precision @ mu)           # scalar
+        xPmu  = xP @ mu                              # (T,)
+        dist2 = xPx - 2.0 * xPmu + muPmu            # (T,)
+        np.minimum(min_dist2, dist2, out=min_dist2)
+    return min_dist2.astype(np.float32)  # high = OOD
+
+
+def _entropy_ood_signal(logits: torch.Tensor, logit_norm_tau: float = 0.04) -> np.ndarray:
+    """LogitNorm OOD signal: entropy of softmax(logits / (||logits|| * tau)).
+    This reproduces the exact same operation as the training loss, so the
+    model's learned confidence is correctly expressed.
+    - In-dist: logit vector strongly aligned with one class → low entropy
+    - OOD: logit vector diffuse → high entropy
+    Returns (T,) numpy array, high = OOD.
+    """
+    norm  = logits.norm(p=2, dim=1, keepdim=True).clamp(min=1e-7)
+    scaled = logits / (norm * logit_norm_tau)                 # same as training
+    probs  = torch.softmax(scaled, dim=1)                     # (T, C)
+    entropy = -(probs * (probs + 1e-9).log()).sum(dim=1)      # (T,)
+    return entropy.cpu().numpy().astype(np.float32)
+
+
 @torch.no_grad()
-def run_inference(model, test_root, device):
+def run_inference(model, test_root, device, use_logit_norm: bool = False,
+                  logit_norm_tau: float = 0.04,
+                  resnet_mahal_stats=None, mstcn_mahal_stats=None):
     dataset = VideoFeatureDataset(root=str(test_root))
     loader  = DataLoader(dataset, batch_size=1, shuffle=False,
                          collate_fn=_collate_single_video)
     model.eval()
     results = []
     for features, labels, video_name in tqdm.tqdm(loader, desc="Inference"):
-        features     = features.unsqueeze(0).to(device)
-        stage_logits = model(features)
+        resnet_np    = features.numpy()                        # (T, 2048)
+        features_gpu = features.unsqueeze(0).to(device)
+        stage_logits = model(features_gpu)
         last_logits  = stage_logits[-1].squeeze(0).T          # (T, C)
         probs        = torch.softmax(last_logits, dim=1).cpu()
-        confidence   = probs.max(dim=1).values.tolist()       # (T,)
+        confidence   = probs.max(dim=1).values.tolist()
         preds        = probs.argmax(dim=1).tolist()
 
+        # OOD signal priority:
+        #  1. LogitNorm entropy (requires model retrained with logit_norm_tau > 0)
+        #  2. ResNet 2048D Mahalanobis
+        #  3. MSTCN 32D Mahalanobis
+        #  4. Flat zero
+        if use_logit_norm:
+            raw_signal = _entropy_ood_signal(last_logits.cpu(), logit_norm_tau)
+        elif resnet_mahal_stats is not None:
+            raw_signal = _mahal_ood_signal(resnet_np, resnet_mahal_stats)
+        elif mstcn_mahal_stats is not None:
+            _, feat_32d_all = model.forward_with_features(features_gpu)
+            feat_32d        = feat_32d_all.squeeze(0).T.cpu().numpy()
+            raw_signal      = _mahal_ood_signal(feat_32d, mstcn_mahal_stats)
+        else:
+            raw_signal = np.zeros(last_logits.shape[0], dtype=np.float32)
+
+        # Normalise per video: z-score so we show deviation from this video's
+        # own baseline rather than an absolute value.  A phase that is uniformly
+        # more uncertain than the rest of the video will show as a clear plateau
+        # even when the absolute entropy is moderate.
+        mu, sigma = raw_signal.mean(), raw_signal.std() + 1e-7
+        ood_signal = ((raw_signal - mu) / sigma).tolist()
+
         gt = labels.tolist()
+        gt_full    = [OOD_LABEL if l == -1 else l for l in gt]
         mask       = [i for i, l in enumerate(gt) if l != -1]
         gt_clean   = [gt[i]         for i in mask]
         pred_clean = [preds[i]      for i in mask]
         conf_clean = [confidence[i] for i in mask]
-        results.append((gt_clean, pred_clean, conf_clean, video_name))
+        results.append((gt_full, preds, confidence, ood_signal, gt_clean, pred_clean, conf_clean, video_name))
     return results
 
 
@@ -449,17 +531,60 @@ def main(config_path: str, ckpt_path: str, out_dir: str, smooth_window: int, spl
     eval_indices   = [i for i in range(len(class_names)) if i not in others_indices]
     num_classes    = config.model.num_classes
 
-    # Load labels.json pour la résolution des doublons CH
-    _labels_path = pathlib.Path(config.dataset.train.params.root).parent.parent / "labels.json"
-    with open(_labels_path) as _f:
-        _all_labels = json.load(_f)
+    # Load ResNet 2048D Mahalanobis stats (primary OOD signal — better separation)
+    resnet_mahal_stats = None
+    resnet_stats_path = split_root.parent / "mahal_stats.npz"
+    if resnet_stats_path.exists():
+        _r = np.load(resnet_stats_path, allow_pickle=True)
+        resnet_mahal_stats = {
+            "class_means": _r["class_means"].astype(np.float32),
+            "precision":   _r["precision"].astype(np.float32),
+        }
+        print(f"  ResNet 2048D Mahalanobis stats loaded — {len(resnet_mahal_stats['class_means'])} classes")
+    else:
+        print(f"  No mahal_stats.npz at {resnet_stats_path} — will try MSTCN 32D fallback")
+
+    # Load MSTCN 32D Mahalanobis stats (fallback)
+    mstcn_mahal_stats = None
+    mstcn_stats_path = split_root.parent / "mstcn_mahal_stats.npz"
+    if mstcn_stats_path.exists():
+        _s = np.load(mstcn_stats_path, allow_pickle=True)
+        mstcn_mahal_stats = {
+            "class_means": _s["class_means"].astype(np.float32),
+            "precision":   _s["precision"].astype(np.float32),
+            "threshold":   float(_s["threshold"]),
+        }
+        print(f"  MSTCN 32D Mahalanobis stats loaded — threshold: {mstcn_mahal_stats['threshold']:.4f}")
+
+    # Use LogitNorm entropy if the config has logit_norm_tau > 0
+    logit_norm_tau = float(config.loss.get("logit_norm_tau", 0.0))
+    use_logit_norm = logit_norm_tau > 0
+    if use_logit_norm:
+        print(f"  LogitNorm model detected (tau={logit_norm_tau}) — using entropy OOD signal")
+    else:
+        print("  Standard CE model — using Mahalanobis OOD signal")
 
     # Raw predictions
-    video_results_raw = run_inference(model, split_root, device)
+    video_results_raw = run_inference(model, split_root, device,
+                                      use_logit_norm=use_logit_norm,
+                                      logit_norm_tau=logit_norm_tau,
+                                      resnet_mahal_stats=resnet_mahal_stats,
+                                      mstcn_mahal_stats=mstcn_mahal_stats)
 
-    # Metrics
+    # Split into viz sequences (full, with OOD frames) and metric sequences (clean)
+    video_results_viz     = [(gt_full, preds_full, conf_full, entropy, vname)
+                             for gt_full, preds_full, conf_full, entropy, _, _, _, vname in video_results_raw]
+    video_results_metrics = [(gt_clean, pred_clean, conf_clean, vname)
+                             for _, _, _, _, gt_clean, pred_clean, conf_clean, vname in video_results_raw]
+
+    # Threshold: with per-video z-score normalisation, 0 = video mean.
+    # Use +1 sigma as threshold: segments clearly above the video's own baseline.
+    ood_entropy_threshold = 1.0
+    print(f"  OOD threshold: {ood_entropy_threshold} (z-score — 1σ above video mean)")
+
+    # Metrics (on clean sequences only)
     raw_metrics, raw_vf1, raw_preds_flat, raw_labels_flat = compute_all_metrics(
-        video_results_raw, num_classes, class_names, others_classes, prefix="raw")
+        video_results_metrics, num_classes, class_names, others_classes, prefix="raw")
 
     all_metrics = {**raw_metrics}
 
@@ -477,63 +602,14 @@ def main(config_path: str, ckpt_path: str, out_dir: str, smooth_window: int, spl
         v = raw_metrics.get(f"raw/per_class/f1/{c}", 0.0)
         print(f"  {c:<35} {v:.3f}")
 
-    # Binary CH metrics (séparées du global)
-    ch_metrics = {}
-    all_gt_ch, all_pred_ch = [], []
-    for *_, video_name in video_results_raw:
-        label_file = split_root / f"{video_name}_labels.npy"
-        ch_file    = split_root / f"{video_name}_binary_ch.npy"
-        if not label_file.exists() or not ch_file.exists():
-            continue
-        gt_labels_full = np.load(label_file)
-        pred_ch        = np.load(ch_file).astype(int)
-
-        # Reconstruire les numéros de frames pour propager CH aux doublons
-        _re = __import__('re')
-        _FRAME_RE = _re.compile(r"Frame_(\d+)")
-        _base = video_name.split("_json_")[0]
-        _keys = sorted(
-            [(int(_FRAME_RE.search(k).group(1)), k)
-             for k in _all_labels if _base in k and _FRAME_RE.search(k)],
-            key=lambda x: x[0]
-        )
-        _frame_nums = [fn for fn, _ in _keys]
-        if len(_frame_nums) == len(gt_labels_full):
-            _ch_frames = {_frame_nums[i] for i, l in enumerate(gt_labels_full) if l == -1}
-            gt_ch = np.array([1 if _frame_nums[i] in _ch_frames else 0
-                              for i in range(len(gt_labels_full))], dtype=int)
-        else:
-            gt_ch = (gt_labels_full == -1).astype(int)
-        all_gt_ch.extend(gt_ch.tolist())
-        all_pred_ch.extend(pred_ch.tolist())
-
-    if all_gt_ch:
-        from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
-        gt_arr   = np.array(all_gt_ch)
-        pred_arr = np.array(all_pred_ch)
-        ch_metrics = {
-            "ch_binary/accuracy":  round(float(accuracy_score(gt_arr, pred_arr)), 6),
-            "ch_binary/precision": round(float(precision_score(gt_arr, pred_arr, zero_division=0)), 6),
-            "ch_binary/recall":    round(float(recall_score(gt_arr, pred_arr, zero_division=0)), 6),
-            "ch_binary/f1":        round(float(f1_score(gt_arr, pred_arr, zero_division=0)), 6),
-        }
-        try:
-            ch_metrics["ch_binary/auroc"] = round(float(roc_auc_score(gt_arr, pred_arr)), 6)
-        except ValueError:
-            pass
-        print(f"\n=== Corneal Hydration binary metrics ===")
-        for k, v in ch_metrics.items():
-            print(f"  {k.replace('ch_binary/',''):<12} {v:.4f}")
-
     with open(out_dir / "metrics.json", "w") as f:
-        json.dump({k: round(v, 6) for k, v in {**all_metrics, **ch_metrics}.items()}, f, indent=2)
+        json.dump({k: round(v, 6) for k, v in all_metrics.items()}, f, indent=2)
     print(f"\n  Saved: metrics.json")
 
     # Plots
     print("\nGenerating plots...")
-    plot_phase_timeline(video_results_raw, class_names, out_dir / "phase_timeline.png",
-                        feat_root=split_root)
-    plot_binary_ch_timeline(video_results_raw, split_root, out_dir / "binary_ch_timeline.png")
+    plot_phase_timeline(video_results_viz, class_names, out_dir / "phase_timeline.png",
+                        ood_threshold=ood_entropy_threshold)
     plot_confusion_matrix(raw_preds_flat, raw_labels_flat, class_names, eval_indices,
                           out_dir / "confusion_matrix.png",
                           "Confusion matrix — predictions (test set)")

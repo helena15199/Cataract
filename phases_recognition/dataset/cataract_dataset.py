@@ -56,7 +56,7 @@ class ImageNumbersDataset(torch_data.Dataset):
         self.max_side = max_side
         self.transform_fn = transform_fn
         self.class_to_idx = {name: idx for idx, name in enumerate(class_names)}
-        self.others_remap = {cls: "Others" for cls in (others_classes or [])}
+        excluded_phases = set(others_classes or [])
 
         labels_json_path = self.root.parent / labels_file
         with open(labels_json_path) as f:
@@ -66,6 +66,9 @@ class ImageNumbersDataset(torch_data.Dataset):
         self.path_to_phase = {
             k: v for k, v in all_labels.items()
             if k.startswith(split_name + "/")
+            and v not in excluded_phases
+            and v in self.class_to_idx
+            and (self.root.parent / k).exists()
         }
 
         self.all_path_images = [self.root.parent / k for k in self.path_to_phase]
@@ -73,8 +76,7 @@ class ImageNumbersDataset(torch_data.Dataset):
 
     def _get_phase(self, path: pathlib.Path) -> str:
         rel_key = str(path.relative_to(self.root.parent)).replace("\\", "/")
-        phase = self.path_to_phase[rel_key]
-        return self.others_remap.get(phase, phase)
+        return self.path_to_phase[rel_key]
 
     def __len__(self) -> int:
         return len(self.all_path_images)

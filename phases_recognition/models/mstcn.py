@@ -96,6 +96,13 @@ class SingleStageTCN(nn.Module):
             out = layer(out)
         return self.output_proj(out)
 
+    def forward_with_features(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Returns (logits (B, C, T), features (B, num_f_maps, T))"""
+        out = self.input_proj(x)
+        for layer in self.layers:
+            out = layer(out)
+        return self.output_proj(out), out
+
 
 class RefinementStageTCN(nn.Module):
     """
@@ -125,6 +132,13 @@ class RefinementStageTCN(nn.Module):
         for layer in self.layers:
             out = layer(out)
         return self.output_proj(out)
+
+    def forward_with_features(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Returns (logits (B, C, T), features (B, num_f_maps, T))"""
+        out = self.input_proj(x)
+        for layer in self.layers:
+            out = layer(out)
+        return self.output_proj(out), out
 
 
 # ---------------------------------------------------------------------------
@@ -192,6 +206,24 @@ class MSTCNPlusPlus(nn.Module):
             outputs.append(out)
 
         return outputs  # len = num_stages
+
+    def forward_with_features(self, x: torch.Tensor) -> tuple[list[torch.Tensor], torch.Tensor]:
+        """Same as forward but also returns the 32D internal features of the last stage.
+
+        Returns:
+            outputs  : list of (B, num_classes, T) — same as forward()
+            features : (B, num_f_maps, T)          — pre-classification features of last stage
+        """
+        x = x.transpose(1, 2)
+
+        out, features = self.prediction_stage.forward_with_features(x)
+        outputs = [out]
+
+        for stage in self.refinement_stages:
+            out, features = stage.forward_with_features(F.softmax(out, dim=1))
+            outputs.append(out)
+
+        return outputs, features  # features from last stage
 
 
 def instantiate_mstcn(model_config: DictConfig | dict) -> MSTCNPlusPlus:

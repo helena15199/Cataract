@@ -68,14 +68,15 @@ def main(args):
 
     # --- Build class mapping (same logic as ImageNumbersDataset) ---
     class_names = list(config.dataset.class_names)
-    others_classes = list(config.dataset.get("others_classes") or [])
+    others_classes = set(config.dataset.get("others_classes") or [])
+    exclude_classes = set(config.dataset.get("exclude_classes") or [])
     binary_phase = config.dataset.get("binary_phase") or None
     class_to_idx = {name: idx for idx, name in enumerate(class_names)}
     if binary_phase:
         class_to_idx[binary_phase] = -1
-    others_remap = {cls: "Others" for cls in others_classes}
 
-    with open(dataset_root / "labels.json") as f:
+    labels_file = config.dataset.get("labels_file", "labels.json")
+    with open(dataset_root / labels_file) as f:
         all_labels = json.load(f)
 
     # Group frame keys by (split, video_folder)
@@ -100,20 +101,44 @@ def main(args):
         )
 
         # Build label array and frame numbers
+        # exclude_classes frames are skipped entirely (e.g. Corneal_hydration)
+        # others_classes frames get label -1 (OOD phases: in sequence but ignored by loss)
         label_list = []
         frame_numbers = []
+        frame_keys_final = []
         for k in frame_keys_sorted:
             phase = all_labels[k]
-            phase = others_remap.get(phase, phase)
-            if phase not in class_to_idx:
-                raise ValueError(f"Unknown phase '{phase}' in {k}. Known: {list(class_to_idx)}")
-            label_list.append(class_to_idx[phase])
+            if phase in exclude_classes:
+                continue
+            # Images may be physically stored under a different split folder
+            img_path = dataset_root / k
+            if not img_path.exists():
+                parts = k.split("/", 1)
+                found = False
+                for alt_split in ("train", "val", "test"):
+                    alt_path = dataset_root / alt_split / parts[1]
+                    if alt_path.exists():
+                        img_path = alt_path
+                        found = True
+                        break
+                if not found:
+                    continue
+            if phase in others_classes or phase not in class_to_idx:
+                label_list.append(-1)
+            else:
+                label_list.append(class_to_idx[phase])
             frame_numbers.append(_extract_frame_number(pathlib.Path(k)))
+            frame_keys_final.append(img_path)
+
+        if not frame_keys_final:
+            pbar.write(f"  Skipping {video} — no valid frames found")
+            continue
+
         labels        = np.array(label_list,   dtype=np.int64)   # (T,)
         frame_numbers = np.array(frame_numbers, dtype=np.int32)  # (T,)
 
         # Load frames and extract features
-        frame_paths = [dataset_root / k for k in frame_keys_sorted]
+        frame_paths = frame_keys_final
         frame_dataset = _VideoFrameDataset(frame_paths, max_side=max_side)
         loader = DataLoader(
             frame_dataset,

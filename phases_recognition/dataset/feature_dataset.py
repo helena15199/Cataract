@@ -33,7 +33,9 @@ class VideoFeatureDataset(Dataset):
         self.video_names = sorted(
             p.stem
             for p in self.root.glob("*.npy")
-            if not p.stem.endswith("_labels") and not p.stem.endswith("_binary_ch")
+            if not p.stem.endswith("_labels")
+            and not p.stem.endswith("_binary_ch")
+            and not p.stem.endswith("_mahal")
         )
         if not self.video_names:
             raise ValueError(f"No feature files found in {self.root}")

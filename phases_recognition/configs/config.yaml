@@ -3,7 +3,7 @@ experiment_name: "cataract_v1.9_no_ch_ood_split"
 
 model:
   name: simple
-  num_classes: 12
+  num_classes: 11
   backbone:
     name: resnet50
     freeze: false
@@ -12,12 +12,13 @@ dataset:
   class_names: [
     "Capsule_polishing", "Hydrodissection",
     "Incision", "Irrigation_and_aspiration",
-    "Lens_implant_settingup", "Others", "Phacoemulsification", "Rhexis",
+    "Lens_implant_settingup", "Phacoemulsification", "Rhexis",
     "Tonifying_and_antibiotics", "Viscous_agent_injection",
     "Viscous_agent_removal", "Wound_hydration"
   ]
   labels_file: "labels_ood.json"
-  others_classes: ["Corneal_hydration", "Malyugin_ring_insertion", "Malyugin_ring_removal", "Suture", "Trypan_blue_injection", "Iris_manipulation"]
+  exclude_classes: ["Corneal_hydration"]
+  others_classes: ["Malyugin_ring_insertion", "Malyugin_ring_removal", "Suture", "Trypan_blue_injection", "Iris_manipulation", "Others"]
   train:
     params:
       root: "/home/helena/UCL_video_cataract/dataset_temporal/train/"
@@ -82,13 +83,13 @@ visualizer:
   class_names: [
     "Capsule_polishing", "Hydrodissection",
     "Incision", "Irrigation_and_aspiration",
-    "Lens_implant_settingup", "Others", "Phacoemulsification", "Rhexis",
+    "Lens_implant_settingup", "Phacoemulsification", "Rhexis",
     "Tonifying_and_antibiotics", "Viscous_agent_injection",
     "Viscous_agent_removal", "Wound_hydration"
   ]
 
 metrics:
-  others_classes: ["Others"]
+  others_classes: []
 
 train:
   epochs: 200

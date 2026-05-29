@@ -1,36 +1,37 @@
 root_dir: "/home/helena/experiments_cataract/"
-experiment_name: "mstcn_v1.8_features_v1.8"
+experiment_name: "mstcn_v1.11_logit_norm"
 
 model:
   name: mstcn
-  num_classes: 12
-  num_stages: 4       # 1 prediction stage + 3 refinement stages
-  num_layers: 10      # dilated layers per stage — receptive field = 2^10 = 1024 frames
-  num_f_maps: 32      # réduit de 64 → 32 pour limiter la capacité (65 vidéos train seulement)
-  input_dim: 2048     # ResNet50 feature dimension
-  dropout: 0.7        # augmenté de 0.5 → 0.7
+  num_classes: 11
+  num_stages: 4
+  num_layers: 10
+  num_f_maps: 32
+  input_dim: 2048
+  dropout: 0.7
 
 dataset:
   class_names: [
     "Capsule_polishing", "Hydrodissection",
     "Incision", "Irrigation_and_aspiration",
-    "Lens_implant_settingup", "Others", "Phacoemulsification", "Rhexis",
+    "Lens_implant_settingup", "Phacoemulsification", "Rhexis",
     "Tonifying_and_antibiotics", "Viscous_agent_injection",
     "Viscous_agent_removal", "Wound_hydration"
   ]
   train:
     params:
-      root: "/home/helena/UCL_video_cataract/features_v1.8/train/"
+      root: "/home/helena/UCL_video_cataract/features_v1.9/train/"
   val:
     params:
-      root: "/home/helena/UCL_video_cataract/features_v1.8/val/"
+      root: "/home/helena/UCL_video_cataract/features_v1.9/val/"
 
 loss:
-  lambda_smoothing: 0.05   # meilleure config du sweep
-  tau: 4.0                 # TMSE clipping threshold
-  label_smoothing: 0.1     # réduit l'overconfidence sur les phases longues
-  use_class_weights: true  # inverse-freq weights — booste Irrigation_and_aspiration
-  focal_gamma: 0.0         # CE classique (meilleur F1_macro dans le sweep)
+  lambda_smoothing: 0.05
+  tau: 4.0
+  label_smoothing: 0.1
+  use_class_weights: true
+  focal_gamma: 2.0
+  logit_norm_tau: 0.04
 
 optimizer:
   target: torch.optim.AdamW
@@ -41,18 +42,18 @@ optimizer:
 lr_scheduler:
   params:
     n_warmup_steps: 100
-    n_total_steps: 20000   # ~300 epochs × 65 videos
+    n_total_steps: 20000
     min_lr_ratio: 0.01
 
 metrics:
-  others_classes: ["Others"]
+  others_classes: []
 
 train:
-  epochs: 200
+  epochs: 300
   device: "cuda:0"
-  use_amp: false      # Conv1d + AMP can be tricky; enable once stable
+  use_amp: false
   max_norm: 1.0
   log_every_n_steps: 5
   val_every_n_epoch: 1
   keep_ckpt: 3
-  feature_noise_std: 0.1   # bruit gaussien sur les features pendant le train
+  feature_noise_std: 0.1
