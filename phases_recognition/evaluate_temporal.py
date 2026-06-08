@@ -225,12 +225,17 @@ def plot_phase_timeline(
     class_names: list[str],
     out_path: pathlib.Path,
     ood_threshold: float | None = None,
-    smooth_window: int = 50,
+    smooth_window: int = 100,
+    error_recalls: dict[str, float] | None = None,
+    error_fprs: dict[str, float] | None = None,
 ):
-    n_classes  = len(class_names)
-    # colors indexed 0..n_classes-1 for known phases + OOD_LABEL for unknown
+    """GT bar + OOD signal per video. The signal is z-scored per video so a
+    peak at +1σ means 'this segment is more uncertain than this video's baseline'.
+    Dark gray in the GT bar = ground-truth unknown phase.
+    """
+    n_classes = len(class_names)
     colors = PHASE_COLORS[:n_classes] + ["#000000"] * (OOD_LABEL - n_classes) + [PHASE_COLORS[OOD_LABEL]]
-    n_videos   = len(video_results_raw)
+    n_videos  = len(video_results_raw)
 
     height_ratios = [3, 1] * n_videos
     fig, axes = plt.subplots(
@@ -240,73 +245,67 @@ def plot_phase_timeline(
         squeeze=False,
     )
 
-    for row, (gt_seq, pred_seq, conf_seq, entropy_seq, video_name) in enumerate(video_results_raw):
-        ax_row = row * 2
-        ax = axes[ax_row, 0]
+    for row, (gt_seq, pred_seq, conf_seq, ood_seq, video_name) in enumerate(video_results_raw):
+        ax_row   = row * 2
         n_frames = len(gt_seq)
+        t        = np.linspace(0, 1, n_frames)
 
-        # GT (y=1) et Pred (y=0) — barres normales
-        _draw_bars(ax, [(gt_seq, "GT"), (pred_seq, "Pred")], colors, n_frames)
-
-        # Fine barre d'erreur (y=-0.6) — uniquement sur frames connues
-        start = 0
-        for i in range(1, n_frames + 1):
-            is_last = i == n_frames
-            wrong_now = pred_seq[start] != gt_seq[start] and gt_seq[start] != OOD_LABEL
-            next_same = not is_last and pred_seq[i] == pred_seq[start] and gt_seq[i] == gt_seq[start]
-            if is_last or not next_same:
-                if wrong_now:
-                    avg_conf = sum(conf_seq[start:i]) / (i - start)
-                    r = avg_conf
-                    b = 1.0 - avg_conf
-                    ax.barh(-0.6, (i - start) / n_frames, left=start / n_frames,
-                            color=(r, 0.0, b), height=0.2, align="center")
-                start = i
-
-        ax.set_xlim(0, 1)
-        ax.set_ylim(-0.8, 1.5)
-        ax.set_yticks([-0.6, 0, 1])
-        ax.set_yticklabels(["Err", "GT", "Pred"], fontsize=7)
-        ax.set_xticks([])
-        ax.set_title(video_name, loc="left", fontsize=8, pad=2)
+        # ── GT + Pred bars ───────────────────────────────────────────────────
+        ax_gt = axes[ax_row, 0]
+        _draw_bars(ax_gt, [(gt_seq, "GT"), (pred_seq, "Pred")], colors, n_frames)
+        ax_gt.set_xlim(0, 1)
+        ax_gt.set_ylim(-0.5, 1.5)
+        ax_gt.set_yticks([0, 1])
+        ax_gt.set_yticklabels(["Pred", "GT"], fontsize=7)
+        ax_gt.set_xticks([])
+        title = video_name
+        if error_recalls is not None and video_name in error_recalls:
+            title += f"   —   erreurs détectées: {error_recalls[video_name] * 100:.0f}%"
+            if error_fprs is not None and video_name in error_fprs:
+                title += f"   |   FPR: {error_fprs[video_name] * 100:.0f}%"
+        ax_gt.set_title(title, loc="left", fontsize=8, pad=2)
         for spine in ["top", "right", "bottom"]:
-            ax.spines[spine].set_visible(False)
+            ax_gt.spines[spine].set_visible(False)
 
-        # OOD signal subplot — two views:
-        # 1) smooth curve (raw frame signal with gaussian blur)
-        # 2) step function (median per predicted segment — phase-level view)
-        ax_ood = axes[ax_row + 1, 0]
-        raw_signal = np.array(entropy_seq, dtype=np.float32)
-        smooth_sig  = _smooth(raw_signal, smooth_window)
-        segment_sig = _segment_ood_signal(raw_signal, pred_seq)
-        t = np.linspace(0, 1, n_frames)
+        # ── OOD signal ──────────────────────────────────────────────────────
+        ax_ood  = axes[ax_row + 1, 0]
+        raw_sig = np.array(ood_seq, dtype=np.float32)
 
-        ax_ood.fill_between(t, 0, smooth_sig, alpha=0.15, color="#E15759", zorder=1)
-        ax_ood.plot(t, smooth_sig, color="#E15759", linewidth=0.7, zorder=2, label="smooth")
-        ax_ood.step(t, segment_sig, color="#8B0000", linewidth=1.2, zorder=4,
-                    where="post", label="segment")
+        # smooth curve — wide window for phase-level trends
+        smooth_sig = _smooth(raw_sig, smooth_window)
+
+        # GT-aligned shading: highlight regions where GT is OOD
+        gt_ood_mask = np.array([g == OOD_LABEL for g in gt_seq])
+        ax_ood.fill_between(t, ax_ood.get_ylim()[0] if False else -10, 10,
+                            where=gt_ood_mask,
+                            alpha=0.12, color="#2D2D2D", zorder=0,
+                            label="GT OOD region")
+
+        ax_ood.fill_between(t, 0, smooth_sig, alpha=0.2, color="#E15759", zorder=1)
+        ax_ood.plot(t, smooth_sig, color="#E15759", linewidth=0.9, zorder=2)
+
         if ood_threshold is not None:
-            ax_ood.axhline(ood_threshold, color="black", linestyle="--",
-                           linewidth=1.0)
-            ax_ood.fill_between(t, ood_threshold, segment_sig,
-                                where=(segment_sig > ood_threshold),
-                                alpha=0.45, color="#8B0000", zorder=3)
+            ax_ood.axhline(ood_threshold, color="black", linestyle="--", linewidth=0.8)
+            ax_ood.fill_between(t, ood_threshold, smooth_sig,
+                                where=(smooth_sig > ood_threshold),
+                                alpha=0.5, color="#E15759", zorder=3)
+
         ax_ood.set_xlim(0, 1)
         ax_ood.set_xticks([])
-        ax_ood.set_ylabel("Mahal\n(OOD↑)", fontsize=6, rotation=0, labelpad=35, va="center")
+        ax_ood.set_ylabel("Incert.\n(↑=tort)", fontsize=6, rotation=0, labelpad=38, va="center")
         ax_ood.tick_params(labelsize=5)
+        ax_ood.axhline(0, color="#AAAAAA", linewidth=0.5, linestyle=":")
         for spine in ["top", "right"]:
             ax_ood.spines[spine].set_visible(False)
 
     handles = [plt.Rectangle((0, 0), 1, 1, color=colors[i]) for i in range(n_classes)]
     handles += [plt.Rectangle((0, 0), 1, 1, color=PHASE_COLORS[OOD_LABEL])]
-    handles += [plt.Rectangle((0, 0), 1, 1, color=(0.0, 0.0, 1.0))]
-    handles += [plt.Rectangle((0, 0), 1, 1, color=(1.0, 0.0, 0.0))]
-    fig.legend(handles, class_names + ["Phase inconnue (OOD)", "Erreur peu confiante", "Erreur très confiante"],
-               loc="lower center", ncol=min(n_classes + 2, 7),
+    labels_legend = class_names + ["Phase inconnue (GT)"]
+    fig.legend(handles, labels_legend,
+               loc="lower center", ncol=min(n_classes + 1, 7),
                fontsize=7, bbox_to_anchor=(0.5, 0), frameon=False)
-    fig.suptitle("Phase timeline — GT / Pred / Erreurs (test set)", fontsize=11, y=1.0)
-    fig.tight_layout(rect=[0, 0.06, 1, 1])
+    fig.suptitle("GT / Pred + signal d'incertitude (entropie × KL inter-stages) — test set", fontsize=11, y=1.0)
+    fig.tight_layout(rect=[0, 0.05, 1, 1])
     fig.savefig(out_path, dpi=100, bbox_inches="tight")
     plt.close(fig)
     print(f"  Saved: {out_path.name}")
@@ -466,33 +465,32 @@ def run_inference(model, test_root, device, use_logit_norm: bool = False,
         resnet_np    = features.numpy()                        # (T, 2048)
         features_gpu = features.unsqueeze(0).to(device)
         stage_logits = model(features_gpu)
+
+        # Probs from last stage
         last_logits  = stage_logits[-1].squeeze(0).T          # (T, C)
         probs        = torch.softmax(last_logits, dim=1).cpu()
         confidence   = probs.max(dim=1).values.tolist()
         preds        = probs.argmax(dim=1).tolist()
 
-        # OOD signal priority:
-        #  1. LogitNorm entropy (requires model retrained with logit_norm_tau > 0)
-        #  2. ResNet 2048D Mahalanobis
-        #  3. MSTCN 32D Mahalanobis
-        #  4. Flat zero
-        if use_logit_norm:
-            raw_signal = _entropy_ood_signal(last_logits.cpu(), logit_norm_tau)
-        elif resnet_mahal_stats is not None:
-            raw_signal = _mahal_ood_signal(resnet_np, resnet_mahal_stats)
-        elif mstcn_mahal_stats is not None:
-            _, feat_32d_all = model.forward_with_features(features_gpu)
-            feat_32d        = feat_32d_all.squeeze(0).T.cpu().numpy()
-            raw_signal      = _mahal_ood_signal(feat_32d, mstcn_mahal_stats)
-        else:
-            raw_signal = np.zeros(last_logits.shape[0], dtype=np.float32)
+        # --- Signal 1: entropie frame-level (last stage) ---
+        # Capture l'incertitude sur toutes les classes, pas juste la max
+        p_last  = probs                                        # (T, C)
+        entropy = -(p_last * (p_last + 1e-9).log()).sum(dim=1).numpy()  # (T,)
 
-        # Normalise per video: z-score so we show deviation from this video's
-        # own baseline rather than an absolute value.  A phase that is uniformly
-        # more uncertain than the rest of the video will show as a clear plateau
-        # even when the absolute entropy is moderate.
-        mu, sigma = raw_signal.mean(), raw_signal.std() + 1e-7
-        ood_signal = ((raw_signal - mu) / sigma).tolist()
+        # --- Signal 2: désaccord inter-stages (stage 1 vs stage 4) ---
+        # KL(p1 || p4) par frame — élevé si le raffinement temporel
+        # contredit fortement la prédiction initiale → instabilité temporelle
+        p_first = torch.softmax(stage_logits[0].squeeze(0).T, dim=1).cpu()  # (T, C)
+        kl_div  = (p_first * ((p_first + 1e-9) / (p_last + 1e-9)).log()).sum(dim=1).numpy()  # (T,)
+        kl_div  = np.abs(kl_div)  # symétrique
+
+        # --- Signal combiné: produit normalisé ---
+        # Haut quand les DEUX signaux sont élevés simultanément
+        entropy_norm = (entropy - entropy.min()) / (entropy.std() + 1e-7)
+        kl_norm      = (kl_div  - kl_div.min())  / (kl_div.std()  + 1e-7)
+        raw_signal   = (entropy_norm * kl_norm).astype(np.float32)
+
+        ood_signal = raw_signal.tolist()
 
         gt = labels.tolist()
         gt_full    = [OOD_LABEL if l == -1 else l for l in gt]
@@ -577,25 +575,104 @@ def main(config_path: str, ckpt_path: str, out_dir: str, smooth_window: int, spl
     video_results_metrics = [(gt_clean, pred_clean, conf_clean, vname)
                              for _, _, _, _, gt_clean, pred_clean, conf_clean, vname in video_results_raw]
 
-    # Threshold: with per-video z-score normalisation, 0 = video mean.
-    # Use +1 sigma as threshold: segments clearly above the video's own baseline.
-    ood_entropy_threshold = 1.0
-    print(f"  OOD threshold: {ood_entropy_threshold} (z-score — 1σ above video mean)")
+    # Split metrics by whether the video contains OOD frames
+    videos_with_ood    = {vname for gt_full, _, _, _, _, _, _, vname in video_results_raw
+                          if OOD_LABEL in gt_full}
+    metrics_no_ood  = [(gt, pred, conf, vname) for gt, pred, conf, vname in video_results_metrics
+                       if vname not in videos_with_ood]
+    metrics_with_ood = [(gt, pred, conf, vname) for gt, pred, conf, vname in video_results_metrics
+                        if vname in videos_with_ood]
+    print(f"\n  Videos without OOD frames : {len(metrics_no_ood)}")
+    print(f"  Videos with OOD frames    : {len(metrics_with_ood)}")
 
-    # Metrics (on clean sequences only)
-    raw_metrics, raw_vf1, raw_preds_flat, raw_labels_flat = compute_all_metrics(
+    # Threshold: 95th percentile of in-dist frames on test set
+    id_signals = []
+    for gt_full, _, _, ood_signal, _, _, _, _ in video_results_raw:
+        id_signals.extend(s for s, g in zip(ood_signal, gt_full) if g != OOD_LABEL)
+    ood_entropy_threshold = float(np.percentile(id_signals, 85)) if id_signals else None
+    print(f"  Uncertainty threshold (85th pct): {ood_entropy_threshold:.4f}")
+
+    # Threshold sweep: for each percentile, global recall (errors caught) vs
+    # FPR (correct frames wrongly flagged) — helps pick the recall/precision compromise.
+    print("\n=== Threshold sweep — global error-detection recall vs FPR ===")
+    all_signals, all_is_error, all_is_known = [], [], []
+    for gt_full, preds_full, _, ood_signal, _, _, _, _ in video_results_raw:
+        gt_arr   = np.asarray(gt_full)
+        pred_arr = np.asarray(preds_full)
+        sig_arr  = np.asarray(ood_signal)
+        known    = gt_arr != OOD_LABEL
+        all_signals.append(sig_arr)
+        all_is_error.append(known & (pred_arr != gt_arr))
+        all_is_known.append(known)
+    all_signals  = np.concatenate(all_signals)
+    all_is_error = np.concatenate(all_is_error)
+    all_is_known = np.concatenate(all_is_known)
+    all_correct  = all_is_known & ~all_is_error
+
+    for pct in [80, 85, 90, 95, 99]:
+        thr = float(np.percentile(id_signals, pct))
+        recall = float((all_signals[all_is_error] > thr).mean()) if all_is_error.any() else float("nan")
+        fpr    = float((all_signals[all_correct] > thr).mean()) if all_correct.any() else float("nan")
+        print(f"  pct={pct:3d}  thr={thr:7.4f}   recall(errors caught)={recall*100:5.1f}%   "
+              f"FPR(correct flagged)={fpr*100:5.1f}%")
+
+    # Error-detection recall: among frames where the model is wrong (on known phases),
+    # what fraction has an uncertainty signal above the threshold?
+    print("\n=== Error detection — recall & FPR @ threshold (per video) ===")
+    error_recalls_by_video = {}
+    error_fprs_by_video = {}
+    for gt_full, preds_full, _, ood_signal, _, _, _, vname in video_results_raw:
+        gt_arr   = np.asarray(gt_full)
+        pred_arr = np.asarray(preds_full)
+        sig_arr  = np.asarray(ood_signal)
+        known          = gt_arr != OOD_LABEL
+        is_known_error = known & (pred_arr != gt_arr)
+        is_correct     = known & (pred_arr == gt_arr)
+        n_errors = int(is_known_error.sum())
+        fpr = float((sig_arr[is_correct] > ood_entropy_threshold).mean()) if is_correct.any() else float("nan")
+        error_fprs_by_video[vname] = fpr
+        if n_errors == 0:
+            print(f"  {vname:<35} no errors   (FPR={fpr*100:5.1f}%)")
+            continue
+        recall = float((sig_arr[is_known_error] > ood_entropy_threshold).mean())
+        error_recalls_by_video[vname] = recall
+        print(f"  {vname:<35} recall={recall*100:5.1f}%  FPR={fpr*100:5.1f}%  ({n_errors} error frames)")
+
+    error_recalls = list(error_recalls_by_video.values())
+    error_fprs = list(error_fprs_by_video.values())
+    mean_error_recall = float(np.mean(error_recalls)) if error_recalls else float("nan")
+    mean_error_fpr = float(np.mean(error_fprs)) if error_fprs else float("nan")
+    print(f"\n  Mean error-detection recall @ threshold: {mean_error_recall*100:.1f}%")
+    print(f"  Mean FPR (correct frames flagged) @ threshold: {mean_error_fpr*100:.1f}%")
+    all_metrics_extra = {
+        "error_detection_recall_mean": mean_error_recall,
+        "error_detection_fpr_mean": mean_error_fpr,
+    }
+
+    # Metrics — all videos + split by OOD presence
+    raw_metrics,     raw_vf1,    raw_preds_flat,    raw_labels_flat    = compute_all_metrics(
         video_results_metrics, num_classes, class_names, others_classes, prefix="raw")
+    metrics_no_ood_d,  _, _, _ = compute_all_metrics(
+        metrics_no_ood,  num_classes, class_names, others_classes, prefix="no_ood") \
+        if metrics_no_ood  else ({}, {}, [], [])
+    metrics_with_ood_d, _, _, _ = compute_all_metrics(
+        metrics_with_ood, num_classes, class_names, others_classes, prefix="with_ood") \
+        if metrics_with_ood else ({}, {}, [], [])
 
-    all_metrics = {**raw_metrics}
+    all_metrics = {**raw_metrics, **metrics_no_ood_d, **metrics_with_ood_d, **all_metrics_extra}
 
-    # Print
-    print(f"\n=== Test metrics ===")
-    for key in ["global/accuracy", "global/f1_macro", "global/auroc",
-                "segment/edit_score", "segment/f1@10", "segment/f1@25", "segment/f1@50"]:
-        v = raw_metrics.get(f"raw/{key}", float("nan"))
-        print(f"  {key:<33} {v:.4f}")
+    def _print_metrics(metrics, prefix, title):
+        print(f"\n=== {title} ===")
+        for key in ["global/accuracy", "global/f1_macro", "global/auroc",
+                    "segment/edit_score", "segment/f1@10", "segment/f1@25", "segment/f1@50"]:
+            v = metrics.get(f"{prefix}/{key}", float("nan"))
+            print(f"  {key:<33} {v:.4f}")
 
-    print("\nPer-class F1:")
+    _print_metrics(raw_metrics,      "raw",      "Test metrics — all videos")
+    _print_metrics(metrics_no_ood_d,  "no_ood",  "Test metrics — videos WITHOUT unknown phases")
+    _print_metrics(metrics_with_ood_d,"with_ood","Test metrics — videos WITH unknown phases")
+
+    print("\nPer-class F1 (all videos):")
     for c in class_names:
         if c in others_classes:
             continue
@@ -609,7 +686,9 @@ def main(config_path: str, ckpt_path: str, out_dir: str, smooth_window: int, spl
     # Plots
     print("\nGenerating plots...")
     plot_phase_timeline(video_results_viz, class_names, out_dir / "phase_timeline.png",
-                        ood_threshold=ood_entropy_threshold)
+                        ood_threshold=ood_entropy_threshold,
+                        error_recalls=error_recalls_by_video,
+                        error_fprs=error_fprs_by_video)
     plot_confusion_matrix(raw_preds_flat, raw_labels_flat, class_names, eval_indices,
                           out_dir / "confusion_matrix.png",
                           "Confusion matrix — predictions (test set)")

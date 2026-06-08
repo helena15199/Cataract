@@ -1,12 +1,12 @@
 root_dir: "/home/helena/experiments_cataract/"
-experiment_name: "mstcn_v1.11_logit_norm"
+experiment_name: "mstcn_v1.12_fmap64"
 
 model:
   name: mstcn
   num_classes: 11
   num_stages: 4
   num_layers: 10
-  num_f_maps: 32
+  num_f_maps: 64
   input_dim: 2048
   dropout: 0.7
 
@@ -31,7 +31,6 @@ loss:
   label_smoothing: 0.1
   use_class_weights: true
   focal_gamma: 2.0
-  logit_norm_tau: 0.04
 
 optimizer:
   target: torch.optim.AdamW
