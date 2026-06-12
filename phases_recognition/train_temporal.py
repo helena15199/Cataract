@@ -72,6 +72,8 @@ class TemporalTrainer:
         val_every_n_epoch: int = 1,
         keep_ckpt: int = 3,
         feature_noise_std: float = 0.0,
+        early_stopping_patience: int = 0,   # 0 = disabled
+        train_crop_len: int = 0,            # 0 = full sequence ; >0 = random temporal crop
         **_,  # absorb unknown config keys
     ):
         self.model       = model
@@ -87,16 +89,19 @@ class TemporalTrainer:
         self.max_norm    = max_norm
         self.log_every_n_steps = log_every_n_steps
         self.val_every_n_epoch = val_every_n_epoch
-        self.keep_ckpt         = keep_ckpt
-        self.feature_noise_std = feature_noise_std
+        self.keep_ckpt                = keep_ckpt
+        self.feature_noise_std        = feature_noise_std
+        self.early_stopping_patience  = early_stopping_patience
+        self.train_crop_len           = train_crop_len
 
         pathlib.Path(log_dir).mkdir(exist_ok=True, parents=True)
         pathlib.Path(ckpt_dir).mkdir(exist_ok=True, parents=True)
         self.writer = SummaryWriter(log_dir=log_dir)
         self.visualizer.writer = self.writer
 
-        self._global_step = 0
-        self.best_f1      = -1.0
+        self._global_step    = 0
+        self.best_f1         = -1.0
+        self._no_improve     = 0
 
         self.model.to(self.device)
         self.loss_fn.to(self.device)
@@ -105,15 +110,17 @@ class TemporalTrainer:
 
     def _run_step(
         self,
-        features: torch.Tensor,  # (T, D)
-        labels:   torch.Tensor,  # (T,)
+        features:  torch.Tensor,  # (T, D)
+        labels:    torch.Tensor,  # (T,)
+        start_pos: int = 0,
+        total_len: int = 0,
     ) -> tuple[torch.Tensor, dict, list[torch.Tensor]]:
         features = features.unsqueeze(0).to(self.device)  # (1, T, D)
         if self.feature_noise_std > 0 and self.model.training:
             features = features + torch.randn_like(features) * self.feature_noise_std
-        labels   = labels.to(self.device)                 # (T,)
+        labels = labels.to(self.device)
 
-        stage_logits = self.model(features)               # list of (1, C, T)
+        stage_logits = self.model(features, start_pos=start_pos, total_len=total_len)
         total_loss, loss_dict = self.loss_fn(stage_logits, labels)
         return total_loss, loss_dict, stage_logits
 
@@ -127,9 +134,19 @@ class TemporalTrainer:
         pbar = tqdm.tqdm(enumerate(loader), total=len(loader), desc=f"{tag} epoch={epoch}")
 
         for i, (features, labels, video_name) in pbar:
+            # Temporal crop : avant tout le reste pour que labels soit cohérent avec logits
+            total_len = features.shape[0]
+            start_pos = 0
+            if is_train and self.train_crop_len > 0 and total_len > self.train_crop_len:
+                start_pos = torch.randint(0, total_len - self.train_crop_len, (1,)).item()
+                features  = features[start_pos : start_pos + self.train_crop_len]
+                labels    = labels  [start_pos : start_pos + self.train_crop_len]
+
             if is_train:
                 self.optimizer.zero_grad(set_to_none=True)
-                total_loss, loss_dict, stage_logits = self._run_step(features, labels)
+                total_loss, loss_dict, stage_logits = self._run_step(
+                    features, labels, start_pos=start_pos, total_len=total_len
+                )
                 if torch.isnan(total_loss):
                     logger.error(f"NaN loss on {video_name}, skipping.")
                     continue
@@ -141,7 +158,9 @@ class TemporalTrainer:
                 self.scheduler.step()
             else:
                 with torch.no_grad():
-                    total_loss, loss_dict, stage_logits = self._run_step(features, labels)
+                    total_loss, loss_dict, stage_logits = self._run_step(
+                        features, labels, start_pos=0, total_len=0
+                    )
 
             # Metrics: use last-stage logits, reshape to (T, C)
             last_logits = stage_logits[-1].squeeze(0).T  # (T, C)
@@ -209,12 +228,28 @@ class TemporalTrainer:
             self._run_epoch(train_loader, epoch, "train")
             if epoch % self.val_every_n_epoch == 0:
                 loss_history, metric_dict = self._run_epoch(val_loader, epoch, "val")
-                self._save_ckpt(epoch, loss_history, metric_dict)
                 f1 = metric_dict.get("global/f1_macro", 0.0)
+                prev_best = self.best_f1
+                self._save_ckpt(epoch, loss_history, metric_dict)
                 logger.info(
                     f"Epoch {epoch} | val f1_macro={f1:.4f} | "
                     f"val accuracy={metric_dict.get('global/accuracy', 0.0):.4f}"
                 )
+
+                if self.early_stopping_patience > 0:
+                    if f1 > prev_best:
+                        self._no_improve = 0
+                    else:
+                        self._no_improve += 1
+                        logger.info(
+                            f"No improvement for {self._no_improve}/{self.early_stopping_patience} epochs"
+                        )
+                    if self._no_improve >= self.early_stopping_patience:
+                        logger.info(
+                            f"Early stopping triggered at epoch {epoch} "
+                            f"(best val f1_macro={self.best_f1:.4f})"
+                        )
+                        break
 
 
 # ---------------------------------------------------------------------------

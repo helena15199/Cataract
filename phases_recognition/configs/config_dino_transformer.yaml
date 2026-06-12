@@ -1,0 +1,61 @@
+root_dir: "/home/helena/experiments_cataract/"
+experiment_name: "dino_transformer_v1"
+
+model:
+  name: dino_transformer
+  num_classes: 11
+  input_dim: 768        # DINOv2 ViT-B/14 CLS token — passer à 1024 si ViT-L
+  hidden_dim: 128       # commencer ici ; descendre à 64 si overfit, monter à 256 si sous-fit
+  num_layers: 2
+  num_heads: 4
+  dropout: 0.1
+  pos_mode: "ratio"     # "ratio" = encode t/T (recommandé) | "absolute" = index brut
+
+dataset:
+  class_names: [
+    "Capsule_polishing", "Hydrodissection",
+    "Incision", "Irrigation_and_aspiration",
+    "Lens_implant_settingup", "Phacoemulsification", "Rhexis",
+    "Tonifying_and_antibiotics", "Viscous_agent_injection",
+    "Viscous_agent_removal", "Wound_hydration"
+  ]
+  train:
+    params:
+      root: "/home/helena/UCL_video_cataract/features_dino/train/"
+  val:
+    params:
+      root: "/home/helena/UCL_video_cataract/features_dino/val/"
+
+loss:
+  lambda_smoothing: 0.05
+  tau: 4.0
+  label_smoothing: 0.1
+  use_class_weights: true
+  focal_gamma: 2.0
+
+optimizer:
+  target: torch.optim.AdamW
+  params:
+    lr: 1e-3
+    weight_decay: 1e-2    # weight decay plus fort que MSTCN : petit dataset
+
+lr_scheduler:
+  params:
+    n_warmup_steps: 50
+    n_total_steps: 10000
+    min_lr_ratio: 0.01
+
+metrics:
+  others_classes: []
+
+train:
+  epochs: 200
+  device: "cuda:0"
+  use_amp: true
+  max_norm: 1.0
+  log_every_n_steps: 5
+  val_every_n_epoch: 1
+  keep_ckpt: 3
+  feature_noise_std: 0.05
+  early_stopping_patience: 40
+  train_crop_len: 0

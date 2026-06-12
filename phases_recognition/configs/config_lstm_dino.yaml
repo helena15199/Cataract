@@ -1,0 +1,63 @@
+root_dir: "/home/helena/experiments_cataract/"
+experiment_name: "lstm_dino_v1"
+
+model:
+  name: tecno
+  num_classes: 11
+  num_stages: 4           # 1 LSTM + 3 TCN refinement
+  num_layers: 10          # dilated layers per TCN stage
+  num_f_maps: 32
+  hidden_dim: 256         # LSTM hidden size
+  num_lstm_layers: 2
+  input_dim: 768          # DINOv2 ViT-B/14 CLS token
+  dropout: 0.3
+  bidirectional: true
+
+dataset:
+  class_names: [
+    "Capsule_polishing", "Hydrodissection",
+    "Incision", "Irrigation_and_aspiration",
+    "Lens_implant_settingup", "Phacoemulsification", "Rhexis",
+    "Tonifying_and_antibiotics", "Viscous_agent_injection",
+    "Viscous_agent_removal", "Wound_hydration"
+  ]
+  train:
+    params:
+      root: "/home/helena/UCL_video_cataract/features_dino/train/"
+  val:
+    params:
+      root: "/home/helena/UCL_video_cataract/features_dino/val/"
+
+loss:
+  lambda_smoothing: 0.15
+  tau: 4.0
+  label_smoothing: 0.1
+  use_class_weights: true
+  focal_gamma: 2.0
+
+optimizer:
+  target: torch.optim.AdamW
+  params:
+    lr: 5e-4
+    weight_decay: 1e-3
+
+lr_scheduler:
+  params:
+    n_warmup_steps: 100
+    n_total_steps: 20000
+    min_lr_ratio: 0.01
+
+metrics:
+  others_classes: []
+
+train:
+  epochs: 300
+  device: "cuda:0"
+  use_amp: false
+  max_norm: 1.0
+  log_every_n_steps: 5
+  val_every_n_epoch: 1
+  keep_ckpt: 3
+  feature_noise_std: 0.1
+  early_stopping_patience: 40
+  train_crop_len: 0

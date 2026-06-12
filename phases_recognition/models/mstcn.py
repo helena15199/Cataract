@@ -187,7 +187,7 @@ class MSTCNPlusPlus(nn.Module):
             for _ in range(num_stages - 1)
         ])
 
-    def forward(self, x: torch.Tensor) -> list[torch.Tensor]:
+    def forward(self, x: torch.Tensor, **_) -> list[torch.Tensor]:
         """
         Args:
             x: (B, T, input_dim)  — B=1 in practice (one video per step)

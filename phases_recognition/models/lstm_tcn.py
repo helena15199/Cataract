@@ -128,7 +128,7 @@ class TeCNO(nn.Module):
             for _ in range(num_stages - 1)
         ])
 
-    def forward(self, x: torch.Tensor) -> list[torch.Tensor]:
+    def forward(self, x: torch.Tensor, **_) -> list[torch.Tensor]:
         """
         x: (B, T, input_dim)
         Returns: list of (B, num_classes, T), one per stage

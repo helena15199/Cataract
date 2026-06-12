@@ -8,6 +8,8 @@ from .mstcn import MSTCNPlusPlus, instantiate_mstcn
 from .e2e_model import E2ETemporalModel, instantiate_e2e_model
 from .asformer import ASFormer, instantiate_asformer
 from .lstm_tcn import TeCNO, instantiate_tecno
+from .temporal_transformer import DinoTemporalTransformer, instantiate_dino_transformer
+from .dual_stream import DualStream, instantiate_dual_stream
 
 RESNET_VARIANTS = {
     "resnet18":  (tv_models.resnet18,  tv_models.ResNet18_Weights.DEFAULT),
@@ -58,6 +60,12 @@ def instantiate_model(model_config: DictConfig | dict) -> nn.Module:
 
     if name == "tecno":
         return instantiate_tecno(model_config)
+
+    if name == "dino_transformer":
+        return instantiate_dino_transformer(model_config)
+
+    if name == "dual_stream":
+        return instantiate_dual_stream(model_config)
 
     predictor_cls = PREDICTORS[name]
     num_classes = model_config.get("num_classes", 17)

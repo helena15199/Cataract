@@ -226,8 +226,6 @@ def plot_phase_timeline(
     out_path: pathlib.Path,
     ood_threshold: float | None = None,
     smooth_window: int = 100,
-    error_recalls: dict[str, float] | None = None,
-    error_fprs: dict[str, float] | None = None,
 ):
     """GT bar + OOD signal per video. The signal is z-scored per video so a
     peak at +1σ means 'this segment is more uncertain than this video's baseline'.
@@ -259,10 +257,6 @@ def plot_phase_timeline(
         ax_gt.set_yticklabels(["Pred", "GT"], fontsize=7)
         ax_gt.set_xticks([])
         title = video_name
-        if error_recalls is not None and video_name in error_recalls:
-            title += f"   —   erreurs détectées: {error_recalls[video_name] * 100:.0f}%"
-            if error_fprs is not None and video_name in error_fprs:
-                title += f"   |   FPR: {error_fprs[video_name] * 100:.0f}%"
         ax_gt.set_title(title, loc="left", fontsize=8, pad=2)
         for spine in ["top", "right", "bottom"]:
             ax_gt.spines[spine].set_visible(False)
@@ -410,6 +404,20 @@ def plot_per_video_f1(video_f1s_raw: dict, video_f1s_smooth: dict, out_path: pat
 # Inference
 # ---------------------------------------------------------------------------
 
+def _mahal_to_predicted_class(features: np.ndarray, preds: np.ndarray, stats: dict) -> np.ndarray:
+    """Mahalanobis² of each frame to the centroid of its predicted class.
+    Measures 'how far is this frame from where the model thinks it belongs'.
+    Returns (T,) float32 — higher = model prediction is less supported by the features.
+    """
+    class_means = stats["class_means"].astype(np.float64)
+    precision   = stats["precision"].astype(np.float64)
+    feats       = features.astype(np.float64)
+    mu    = class_means[preds]
+    diff  = feats - mu
+    dist2 = (diff @ precision * diff).sum(axis=1)
+    return dist2.astype(np.float32)
+
+
 def _mahal_ood_signal(features: np.ndarray, stats: dict) -> np.ndarray:
     """Compute per-frame min-class Mahalanobis² OOD score.
     Works for any feature dimension; uses an identity expansion to avoid
@@ -472,25 +480,17 @@ def run_inference(model, test_root, device, use_logit_norm: bool = False,
         confidence   = probs.max(dim=1).values.tolist()
         preds        = probs.argmax(dim=1).tolist()
 
-        # --- Signal 1: entropie frame-level (last stage) ---
-        # Capture l'incertitude sur toutes les classes, pas juste la max
-        p_last  = probs                                        # (T, C)
-        entropy = -(p_last * (p_last + 1e-9).log()).sum(dim=1).numpy()  # (T,)
+        # --- Signal: entropy × inter-stage KL ---
+        p_last  = probs
+        entropy = -(p_last * (p_last + 1e-9).log()).sum(dim=1).numpy()
 
-        # --- Signal 2: désaccord inter-stages (stage 1 vs stage 4) ---
-        # KL(p1 || p4) par frame — élevé si le raffinement temporel
-        # contredit fortement la prédiction initiale → instabilité temporelle
-        p_first = torch.softmax(stage_logits[0].squeeze(0).T, dim=1).cpu()  # (T, C)
-        kl_div  = (p_first * ((p_first + 1e-9) / (p_last + 1e-9)).log()).sum(dim=1).numpy()  # (T,)
-        kl_div  = np.abs(kl_div)  # symétrique
+        p_first = torch.softmax(stage_logits[0].squeeze(0).T, dim=1).cpu()
+        kl_div  = (p_first * ((p_first + 1e-9) / (p_last + 1e-9)).log()).sum(dim=1).numpy()
+        kl_div  = np.abs(kl_div)
 
-        # --- Signal combiné: produit normalisé ---
-        # Haut quand les DEUX signaux sont élevés simultanément
         entropy_norm = (entropy - entropy.min()) / (entropy.std() + 1e-7)
         kl_norm      = (kl_div  - kl_div.min())  / (kl_div.std()  + 1e-7)
-        raw_signal   = (entropy_norm * kl_norm).astype(np.float32)
-
-        ood_signal = raw_signal.tolist()
+        ood_signal   = (entropy_norm * kl_norm).astype(np.float32).tolist()
 
         gt = labels.tolist()
         gt_full    = [OOD_LABEL if l == -1 else l for l in gt]
@@ -569,85 +569,30 @@ def main(config_path: str, ckpt_path: str, out_dir: str, smooth_window: int, spl
                                       resnet_mahal_stats=resnet_mahal_stats,
                                       mstcn_mahal_stats=mstcn_mahal_stats)
 
-    # Split into viz sequences (full, with OOD frames) and metric sequences (clean)
-    video_results_viz     = [(gt_full, preds_full, conf_full, entropy, vname)
-                             for gt_full, preds_full, conf_full, entropy, _, _, _, vname in video_results_raw]
+    # Split into viz and metrics views
+    video_results_viz     = [(gt_full, preds_full, conf_full, ood_signal, vname)
+                             for gt_full, preds_full, conf_full, ood_signal, _, _, _, vname
+                             in video_results_raw]
     video_results_metrics = [(gt_clean, pred_clean, conf_clean, vname)
-                             for _, _, _, _, gt_clean, pred_clean, conf_clean, vname in video_results_raw]
+                             for _, _, _, _, gt_clean, pred_clean, conf_clean, vname
+                             in video_results_raw]
 
     # Split metrics by whether the video contains OOD frames
-    videos_with_ood    = {vname for gt_full, _, _, _, _, _, _, vname in video_results_raw
-                          if OOD_LABEL in gt_full}
-    metrics_no_ood  = [(gt, pred, conf, vname) for gt, pred, conf, vname in video_results_metrics
-                       if vname not in videos_with_ood]
+    videos_with_ood  = {vname for gt_full, _, _, _, _, _, _, vname in video_results_raw
+                        if OOD_LABEL in gt_full}
+    metrics_no_ood   = [(gt, pred, conf, vname) for gt, pred, conf, vname in video_results_metrics
+                        if vname not in videos_with_ood]
     metrics_with_ood = [(gt, pred, conf, vname) for gt, pred, conf, vname in video_results_metrics
                         if vname in videos_with_ood]
     print(f"\n  Videos without OOD frames : {len(metrics_no_ood)}")
     print(f"  Videos with OOD frames    : {len(metrics_with_ood)}")
 
-    # Threshold: 95th percentile of in-dist frames on test set
+    # Threshold: 95th percentile of in-dist frames
     id_signals = []
     for gt_full, _, _, ood_signal, _, _, _, _ in video_results_raw:
         id_signals.extend(s for s, g in zip(ood_signal, gt_full) if g != OOD_LABEL)
-    ood_entropy_threshold = float(np.percentile(id_signals, 85)) if id_signals else None
-    print(f"  Uncertainty threshold (85th pct): {ood_entropy_threshold:.4f}")
-
-    # Threshold sweep: for each percentile, global recall (errors caught) vs
-    # FPR (correct frames wrongly flagged) — helps pick the recall/precision compromise.
-    print("\n=== Threshold sweep — global error-detection recall vs FPR ===")
-    all_signals, all_is_error, all_is_known = [], [], []
-    for gt_full, preds_full, _, ood_signal, _, _, _, _ in video_results_raw:
-        gt_arr   = np.asarray(gt_full)
-        pred_arr = np.asarray(preds_full)
-        sig_arr  = np.asarray(ood_signal)
-        known    = gt_arr != OOD_LABEL
-        all_signals.append(sig_arr)
-        all_is_error.append(known & (pred_arr != gt_arr))
-        all_is_known.append(known)
-    all_signals  = np.concatenate(all_signals)
-    all_is_error = np.concatenate(all_is_error)
-    all_is_known = np.concatenate(all_is_known)
-    all_correct  = all_is_known & ~all_is_error
-
-    for pct in [80, 85, 90, 95, 99]:
-        thr = float(np.percentile(id_signals, pct))
-        recall = float((all_signals[all_is_error] > thr).mean()) if all_is_error.any() else float("nan")
-        fpr    = float((all_signals[all_correct] > thr).mean()) if all_correct.any() else float("nan")
-        print(f"  pct={pct:3d}  thr={thr:7.4f}   recall(errors caught)={recall*100:5.1f}%   "
-              f"FPR(correct flagged)={fpr*100:5.1f}%")
-
-    # Error-detection recall: among frames where the model is wrong (on known phases),
-    # what fraction has an uncertainty signal above the threshold?
-    print("\n=== Error detection — recall & FPR @ threshold (per video) ===")
-    error_recalls_by_video = {}
-    error_fprs_by_video = {}
-    for gt_full, preds_full, _, ood_signal, _, _, _, vname in video_results_raw:
-        gt_arr   = np.asarray(gt_full)
-        pred_arr = np.asarray(preds_full)
-        sig_arr  = np.asarray(ood_signal)
-        known          = gt_arr != OOD_LABEL
-        is_known_error = known & (pred_arr != gt_arr)
-        is_correct     = known & (pred_arr == gt_arr)
-        n_errors = int(is_known_error.sum())
-        fpr = float((sig_arr[is_correct] > ood_entropy_threshold).mean()) if is_correct.any() else float("nan")
-        error_fprs_by_video[vname] = fpr
-        if n_errors == 0:
-            print(f"  {vname:<35} no errors   (FPR={fpr*100:5.1f}%)")
-            continue
-        recall = float((sig_arr[is_known_error] > ood_entropy_threshold).mean())
-        error_recalls_by_video[vname] = recall
-        print(f"  {vname:<35} recall={recall*100:5.1f}%  FPR={fpr*100:5.1f}%  ({n_errors} error frames)")
-
-    error_recalls = list(error_recalls_by_video.values())
-    error_fprs = list(error_fprs_by_video.values())
-    mean_error_recall = float(np.mean(error_recalls)) if error_recalls else float("nan")
-    mean_error_fpr = float(np.mean(error_fprs)) if error_fprs else float("nan")
-    print(f"\n  Mean error-detection recall @ threshold: {mean_error_recall*100:.1f}%")
-    print(f"  Mean FPR (correct frames flagged) @ threshold: {mean_error_fpr*100:.1f}%")
-    all_metrics_extra = {
-        "error_detection_recall_mean": mean_error_recall,
-        "error_detection_fpr_mean": mean_error_fpr,
-    }
+    ood_entropy_threshold = float(np.percentile(id_signals, 95)) if id_signals else None
+    print(f"  Uncertainty threshold (95th pct): {ood_entropy_threshold:.4f}")
 
     # Metrics — all videos + split by OOD presence
     raw_metrics,     raw_vf1,    raw_preds_flat,    raw_labels_flat    = compute_all_metrics(
@@ -659,7 +604,7 @@ def main(config_path: str, ckpt_path: str, out_dir: str, smooth_window: int, spl
         metrics_with_ood, num_classes, class_names, others_classes, prefix="with_ood") \
         if metrics_with_ood else ({}, {}, [], [])
 
-    all_metrics = {**raw_metrics, **metrics_no_ood_d, **metrics_with_ood_d, **all_metrics_extra}
+    all_metrics = {**raw_metrics, **metrics_no_ood_d, **metrics_with_ood_d}
 
     def _print_metrics(metrics, prefix, title):
         print(f"\n=== {title} ===")
@@ -686,9 +631,7 @@ def main(config_path: str, ckpt_path: str, out_dir: str, smooth_window: int, spl
     # Plots
     print("\nGenerating plots...")
     plot_phase_timeline(video_results_viz, class_names, out_dir / "phase_timeline.png",
-                        ood_threshold=ood_entropy_threshold,
-                        error_recalls=error_recalls_by_video,
-                        error_fprs=error_fprs_by_video)
+                        ood_threshold=ood_entropy_threshold)
     plot_confusion_matrix(raw_preds_flat, raw_labels_flat, class_names, eval_indices,
                           out_dir / "confusion_matrix.png",
                           "Confusion matrix — predictions (test set)")
