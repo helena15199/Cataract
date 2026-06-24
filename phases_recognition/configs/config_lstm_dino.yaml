@@ -61,3 +61,4 @@ train:
   feature_noise_std: 0.1
   early_stopping_patience: 40
   train_crop_len: 0
+  mixup_alpha: 0.4

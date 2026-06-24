@@ -235,62 +235,24 @@ def plot_phase_timeline(
     colors = PHASE_COLORS[:n_classes] + ["#000000"] * (OOD_LABEL - n_classes) + [PHASE_COLORS[OOD_LABEL]]
     n_videos  = len(video_results_raw)
 
-    height_ratios = [3, 1] * n_videos
     fig, axes = plt.subplots(
-        n_videos * 2, 1,
-        figsize=(14, n_videos * 1.8 + 1.5),
-        gridspec_kw={"height_ratios": height_ratios},
+        n_videos, 1,
+        figsize=(14, n_videos * 1.2 + 1.5),
         squeeze=False,
     )
 
-    for row, (gt_seq, pred_seq, conf_seq, ood_seq, video_name) in enumerate(video_results_raw):
-        ax_row   = row * 2
+    for row, (gt_seq, pred_seq, *_rest, video_name) in enumerate(video_results_raw):
         n_frames = len(gt_seq)
-        t        = np.linspace(0, 1, n_frames)
-
-        # ── GT + Pred bars ───────────────────────────────────────────────────
-        ax_gt = axes[ax_row, 0]
-        _draw_bars(ax_gt, [(gt_seq, "GT"), (pred_seq, "Pred")], colors, n_frames)
-        ax_gt.set_xlim(0, 1)
-        ax_gt.set_ylim(-0.5, 1.5)
-        ax_gt.set_yticks([0, 1])
-        ax_gt.set_yticklabels(["Pred", "GT"], fontsize=7)
-        ax_gt.set_xticks([])
-        title = video_name
-        ax_gt.set_title(title, loc="left", fontsize=8, pad=2)
+        ax = axes[row, 0]
+        _draw_bars(ax, [(gt_seq, "GT"), (pred_seq, "Pred")], colors, n_frames)
+        ax.set_xlim(0, 1)
+        ax.set_ylim(-0.5, 1.5)
+        ax.set_yticks([0, 1])
+        ax.set_yticklabels(["GT", "Pred"], fontsize=7)
+        ax.set_xticks([])
+        ax.set_title(video_name, loc="left", fontsize=8, pad=2)
         for spine in ["top", "right", "bottom"]:
-            ax_gt.spines[spine].set_visible(False)
-
-        # ── OOD signal ──────────────────────────────────────────────────────
-        ax_ood  = axes[ax_row + 1, 0]
-        raw_sig = np.array(ood_seq, dtype=np.float32)
-
-        # smooth curve — wide window for phase-level trends
-        smooth_sig = _smooth(raw_sig, smooth_window)
-
-        # GT-aligned shading: highlight regions where GT is OOD
-        gt_ood_mask = np.array([g == OOD_LABEL for g in gt_seq])
-        ax_ood.fill_between(t, ax_ood.get_ylim()[0] if False else -10, 10,
-                            where=gt_ood_mask,
-                            alpha=0.12, color="#2D2D2D", zorder=0,
-                            label="GT OOD region")
-
-        ax_ood.fill_between(t, 0, smooth_sig, alpha=0.2, color="#E15759", zorder=1)
-        ax_ood.plot(t, smooth_sig, color="#E15759", linewidth=0.9, zorder=2)
-
-        if ood_threshold is not None:
-            ax_ood.axhline(ood_threshold, color="black", linestyle="--", linewidth=0.8)
-            ax_ood.fill_between(t, ood_threshold, smooth_sig,
-                                where=(smooth_sig > ood_threshold),
-                                alpha=0.5, color="#E15759", zorder=3)
-
-        ax_ood.set_xlim(0, 1)
-        ax_ood.set_xticks([])
-        ax_ood.set_ylabel("Incert.\n(↑=tort)", fontsize=6, rotation=0, labelpad=38, va="center")
-        ax_ood.tick_params(labelsize=5)
-        ax_ood.axhline(0, color="#AAAAAA", linewidth=0.5, linestyle=":")
-        for spine in ["top", "right"]:
-            ax_ood.spines[spine].set_visible(False)
+            ax.spines[spine].set_visible(False)
 
     handles = [plt.Rectangle((0, 0), 1, 1, color=colors[i]) for i in range(n_classes)]
     handles += [plt.Rectangle((0, 0), 1, 1, color=PHASE_COLORS[OOD_LABEL])]
@@ -298,7 +260,7 @@ def plot_phase_timeline(
     fig.legend(handles, labels_legend,
                loc="lower center", ncol=min(n_classes + 1, 7),
                fontsize=7, bbox_to_anchor=(0.5, 0), frameon=False)
-    fig.suptitle("GT / Pred + signal d'incertitude (entropie × KL inter-stages) — test set", fontsize=11, y=1.0)
+    fig.suptitle("GT / Pred — test set", fontsize=11, y=1.0)
     fig.tight_layout(rect=[0, 0.05, 1, 1])
     fig.savefig(out_path, dpi=100, bbox_inches="tight")
     plt.close(fig)

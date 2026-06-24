@@ -21,6 +21,10 @@ sys.path.insert(0, str(pathlib.Path(__file__).parent))
 from dataset.feature_dataset import VideoFeatureDataset, _collate_single_video
 from metrics.cataract_metrics import CataractMetrics
 from models import instantiate_model
+from evaluate_temporal import (
+    plot_phase_timeline, plot_confusion_matrix, plot_per_video_f1,
+    compute_all_metrics, OOD_LABEL,
+)
 
 # ---------------------------------------------------------------------------
 # Checkpoints
@@ -121,6 +125,7 @@ def main():
     results_oracle   = []
     results_mstcn    = []
     results_lstm     = []
+    weighted_viz     = []
 
     for vname in probs_mstcn:
         pm, labels = probs_mstcn[vname]   # (T, C)
@@ -140,9 +145,10 @@ def main():
         pred_weighted = (pm_w + pl_w).argmax(axis=1).tolist()
 
         # C — oracle: frame-by-frame pick the model that's right
-        gt = labels.tolist()
-        correct_m = (np.array(pred_m) == labels).astype(int)
-        correct_l = (np.array(pred_l) == labels).astype(int)
+        gt = labels.tolist() if not isinstance(labels, list) else labels
+        labels_np = np.array(gt)
+        correct_m = (np.array(pred_m) == labels_np).astype(int)
+        correct_l = (np.array(pred_l) == labels_np).astype(int)
         oracle = []
         for t in range(len(gt)):
             if correct_m[t]:
@@ -153,11 +159,21 @@ def main():
                 oracle.append(pred_m[t])   # both wrong → arbitrary
         pred_oracle = oracle
 
-        results_mstcn.append((gt, pred_m,        vname))
-        results_lstm.append( (gt, pred_l,        vname))
-        results_soft.append( (gt, pred_soft,     vname))
+        # OOD signal pour le weighted ensemble : entropie des probs combinées
+        pw = pm * w_mstcn[None, :] + pl * w_lstm[None, :]   # (T, C)
+        entropy = (-(pw * np.log(pw + 1e-9)).sum(axis=1)).tolist()
+        # GT avec OOD_LABEL pour les frames -1
+        gt_full = [OOD_LABEL if l == -1 else l for l in labels.tolist()]
+        conf    = pw.max(axis=1).tolist()
+
+        results_mstcn.append((gt, pred_m,          vname))
+        results_lstm.append( (gt, pred_l,           vname))
+        results_soft.append( (gt, pred_soft,        vname))
         results_weighted.append((gt, pred_weighted, vname))
         results_oracle.append(  (gt, pred_oracle,   vname))
+
+        # Format pour plot_phase_timeline : (gt_full, preds, conf, ood_signal, vname)
+        weighted_viz.append((gt_full, pred_weighted, conf, entropy, vname))
 
     compute_metrics(results_mstcn,    num_classes, CLASS_NAMES, "MSTCN DINOv2 (individual)")
     compute_metrics(results_lstm,     num_classes, CLASS_NAMES, "LSTM DINOv2 (individual)")
@@ -165,9 +181,24 @@ def main():
     compute_metrics(results_weighted, num_classes, CLASS_NAMES, "B — Weighted voting (per-class val F1)")
     compute_metrics(results_oracle,   num_classes, CLASS_NAMES, "C — Oracle (upper bound)")
 
-    print("\n" + "="*55)
-    print("Summary")
-    print("="*55)
+    # Plots pour l'ensemble weighted
+    out_dir = pathlib.Path("/home/helena/experiments_cataract/ensemble_weighted_eval/")
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    print(f"\nGénération des plots → {out_dir}")
+    plot_phase_timeline(weighted_viz, CLASS_NAMES, out_dir / "phase_timeline.png")
+
+    all_preds  = [p for gt, preds, vname in results_weighted for p in preds]
+    all_labels = [l for gt, preds, vname in results_weighted for l in gt]
+    eval_indices = list(range(num_classes))
+    plot_confusion_matrix(all_preds, all_labels, CLASS_NAMES, eval_indices,
+                          out_dir / "confusion_matrix.png",
+                          "Ensemble weighted — test set")
+
+    _, raw_vf1, _, _ = compute_all_metrics(results_weighted, num_classes,
+                                            CLASS_NAMES, [], prefix="raw")
+    plot_per_video_f1(raw_vf1, {}, out_dir / "per_video_f1.png")
+    print("Done.")
 
 
 if __name__ == "__main__":

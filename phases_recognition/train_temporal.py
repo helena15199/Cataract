@@ -74,6 +74,7 @@ class TemporalTrainer:
         feature_noise_std: float = 0.0,
         early_stopping_patience: int = 0,   # 0 = disabled
         train_crop_len: int = 0,            # 0 = full sequence ; >0 = random temporal crop
+        mixup_alpha: float = 0.0,           # 0 = disabled ; 0.4 recommended
         **_,  # absorb unknown config keys
     ):
         self.model       = model
@@ -93,6 +94,8 @@ class TemporalTrainer:
         self.feature_noise_std        = feature_noise_std
         self.early_stopping_patience  = early_stopping_patience
         self.train_crop_len           = train_crop_len
+        self.mixup_alpha              = mixup_alpha
+        self._train_dataset           = None   # set in fit()
 
         pathlib.Path(log_dir).mkdir(exist_ok=True, parents=True)
         pathlib.Path(ckpt_dir).mkdir(exist_ok=True, parents=True)
@@ -134,6 +137,23 @@ class TemporalTrainer:
         pbar = tqdm.tqdm(enumerate(loader), total=len(loader), desc=f"{tag} epoch={epoch}")
 
         for i, (features, labels, video_name) in pbar:
+            # Mixup : interpoler avec une autre vidéo aléatoire par position relative
+            if is_train and self.mixup_alpha > 0 and self._train_dataset is not None:
+                lam = float(torch.distributions.Beta(
+                    torch.tensor(self.mixup_alpha),
+                    torch.tensor(self.mixup_alpha),
+                ).sample())
+                mix_idx = torch.randint(len(self._train_dataset), (1,)).item()
+                feat_b, labels_b, _ = self._train_dataset[mix_idx]
+                T_a, T_b = features.shape[0], feat_b.shape[0]
+                # aligner feat_b sur la longueur de feat_a par position relative (t/T)
+                idx_b = (torch.linspace(0, 1, T_a) * (T_b - 1)).long().clamp(0, T_b - 1)
+                feat_b_aligned   = feat_b[idx_b]
+                labels_b_aligned = labels_b[idx_b]
+                features = lam * features + (1.0 - lam) * feat_b_aligned
+                # labels : garder ceux de la vidéo dominante
+                labels = labels if lam >= 0.5 else labels_b_aligned
+
             # Temporal crop : avant tout le reste pour que labels soit cohérent avec logits
             total_len = features.shape[0]
             start_pos = 0
@@ -224,6 +244,7 @@ class TemporalTrainer:
     # ------------------------------------------------------------------
 
     def fit(self, train_loader, val_loader):
+        self._train_dataset = train_loader.dataset
         for epoch in range(self.epochs):
             self._run_epoch(train_loader, epoch, "train")
             if epoch % self.val_every_n_epoch == 0:
