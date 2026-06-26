@@ -96,32 +96,13 @@ def extract_mstcn_features(mstcn, split, device):
     return out
 
 
-def map_unknown_phases(test_videos):
-    with open(OOD_JSON) as f:
-        ood_data = json.load(f)
-    all_unk = []
-    for name, feats, labels in test_videos:
-        T = len(labels)
-        prefix = f"test/{name}/"
-        frame_phase = {}
-        for key, phase in ood_data.items():
-            if not key.startswith(prefix):
-                continue
-            m = re.search(r"Frame_(\d+)", key)
-            if m:
-                frame_phase[int(m.group(1))] = phase
-        unk = np.full(T, "", dtype=object)
-        if frame_phase:
-            sf = sorted(frame_phase.keys())
-            step = max(1, sf[-1] // T)
-            for t in range(T):
-                if labels[t] != -1:
-                    continue
-                approx = t * step
-                closest = min(sf, key=lambda x: abs(x - approx))
-                unk[t] = frame_phase[closest]
-        all_unk.append(unk)
-    return all_unk
+def load_phase_names(split, video_names):
+    """Load phase names from pre-saved _phases.npy files."""
+    all_phase_names = []
+    for name in video_names:
+        path = FEAT_ROOT / split / f"{name}_phases.npy"
+        all_phase_names.append(np.load(path, allow_pickle=True))
+    return all_phase_names
 
 
 # ── Scoring functions ─────────────────────────────────────────────────────
@@ -385,7 +366,8 @@ def main():
     test_dino_f = np.concatenate([f for _, f, l in test_dino])
     test_labels = np.concatenate([l for _, _, l in test_dino])
     test_mstcn_f = np.concatenate(test_mstcn)
-    unk_names = np.concatenate(map_unknown_phases(test_dino))
+    test_video_names = [name for name, _, _ in test_dino]
+    unk_names = np.concatenate(load_phase_names("test", test_video_names))
 
     keep = ~((test_labels == -1) & (unk_names == "Corneal_hydration"))
     test_dino_f = test_dino_f[keep]

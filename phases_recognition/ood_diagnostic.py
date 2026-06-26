@@ -82,35 +82,13 @@ def extract_mstcn_features(mstcn, split, device):
     return out
 
 
-def map_unknown_phases_per_video(test_videos):
-    """Returns list of unk_names arrays (one per video), plus raw frame_phase dicts."""
-    with open(OOD_JSON) as f:
-        ood_data = json.load(f)
-    all_unk = []
-    all_frame_phase = []
+def load_phase_names_per_video(test_videos):
+    """Load phase names from pre-saved _phases.npy files."""
+    all_phases = []
     for name, feats, labels in test_videos:
-        T = len(labels)
-        prefix = f"test/{name}/"
-        frame_phase = {}
-        for key, phase in ood_data.items():
-            if not key.startswith(prefix):
-                continue
-            m = re.search(r"Frame_(\d+)", key)
-            if m:
-                frame_phase[int(m.group(1))] = phase
-        unk = np.full(T, "", dtype=object)
-        if frame_phase:
-            sf = sorted(frame_phase.keys())
-            step = max(1, sf[-1] // T)
-            for t in range(T):
-                if labels[t] != -1:
-                    continue
-                approx = t * step
-                closest = min(sf, key=lambda x: abs(x - approx))
-                unk[t] = frame_phase[closest]
-        all_unk.append(unk)
-        all_frame_phase.append(frame_phase)
-    return all_unk, all_frame_phase
+        path = FEAT_ROOT / "test" / f"{name}_phases.npy"
+        all_phases.append(np.load(path, allow_pickle=True))
+    return all_phases
 
 
 def fit_knn(train_feats, k=KNN_K):
@@ -176,7 +154,7 @@ def main():
     train_feats_m = np.concatenate(train_mstcn_list)[mask_known]
     train_labels = train_labels[mask_known]
 
-    unk_names_per_video, frame_phases = map_unknown_phases_per_video(test_dino)
+    unk_names_per_video = load_phase_names_per_video(test_dino)
 
     # ══════════════════════════════════════════════════════════════════════
     # 1. Missing unknowns — what are the ~1326 unaccounted frames?

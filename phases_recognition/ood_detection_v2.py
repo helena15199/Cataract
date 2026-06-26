@@ -284,38 +284,14 @@ def loco_evaluate(spaces_train: dict, spaces_val: dict, n_classes: int):
 
 # ── 4. Final test evaluation ──────────────────────────────────────────────
 
-def map_unknown_phases(test_videos):
-    """Map -1 labels to specific unknown phase names using labels_ood.json."""
-    import json, re
-    ood_path = pathlib.Path("/home/helena/UCL_video_cataract/dataset_temporal/labels_ood.json")
-    with open(ood_path) as f:
-        ood_data = json.load(f)
-
-    unk_names_all = []
+def load_phase_names(test_videos):
+    """Load phase names from pre-saved _phases.npy files."""
+    feat_root = pathlib.Path("/home/helena/UCL_video_cataract/features_dino/")
+    all_phases = []
     for name, feats, labels in test_videos:
-        T = len(labels)
-        prefix = f"test/{name}/"
-        frame_phase = {}
-        for key, phase in ood_data.items():
-            if not key.startswith(prefix):
-                continue
-            m = re.search(r"Frame_(\d+)", key)
-            if m:
-                frame_phase[int(m.group(1))] = phase
-
-        unk_names = np.full(T, "", dtype=object)
-        if frame_phase:
-            sorted_frames = sorted(frame_phase.keys())
-            step = max(1, sorted_frames[-1] // T)
-            for t in range(T):
-                if labels[t] != -1:
-                    continue
-                approx_frame = t * step
-                closest = min(sorted_frames, key=lambda f: abs(f - approx_frame))
-                unk_names[t] = frame_phase[closest]
-        unk_names_all.append(unk_names)
-
-    return unk_names_all
+        path = feat_root / "test" / f"{name}_phases.npy"
+        all_phases.append(np.load(path, allow_pickle=True))
+    return all_phases
 
 
 def temporal_smooth(scores: np.ndarray, min_run: int = SMOOTH_MIN_RUN):
@@ -355,7 +331,7 @@ def evaluate_test(spaces_train, spaces_test, test_dino_videos,
     test_labels = np.concatenate(test_labels_list)
 
     # Map unknown phases
-    unk_names_all = map_unknown_phases(test_dino_videos)
+    unk_names_all = load_phase_names(test_dino_videos)
     unk_names = np.concatenate(unk_names_all)
 
     # Exclude Corneal_hydration
@@ -492,7 +468,7 @@ def plot_all_spaces_test(spaces_train, spaces_test, test_dino_videos, out_dir):
         test_feats = np.concatenate(test_feats_list)
         test_labels = np.concatenate(test_labels_list)
 
-        unk_names_all = map_unknown_phases(test_dino_videos)
+        unk_names_all = load_phase_names(test_dino_videos)
         unk_names = np.concatenate(unk_names_all)
 
         keep = ~((test_labels == -1) & (unk_names == "Corneal_hydration"))

@@ -92,30 +92,12 @@ def extract_mstcn_features(mstcn, split, device):
     return out
 
 
-def map_ood_phases(test_videos):
-    """Map each frame to its phase name from labels_ood.json."""
-    with open(OOD_JSON) as f:
-        ood_data = json.load(f)
+def load_phase_names(split, video_names):
+    """Load phase names from pre-saved _phases.npy files."""
     all_phase_names = []
-    for name, feats, labels in test_videos:
-        T = len(labels)
-        prefix = f"test/{name}/"
-        frame_phase = {}
-        for key, phase in ood_data.items():
-            if not key.startswith(prefix):
-                continue
-            m = re.search(r"Frame_(\d+)", key)
-            if m:
-                frame_phase[int(m.group(1))] = phase
-        phase_names = np.full(T, "", dtype=object)
-        if frame_phase:
-            sf = sorted(frame_phase.keys())
-            step = max(1, sf[-1] // T)
-            for t in range(T):
-                approx = t * step
-                closest = min(sf, key=lambda x: abs(x - approx))
-                phase_names[t] = frame_phase[closest]
-        all_phase_names.append(phase_names)
+    for name in video_names:
+        path = FEAT_ROOT / split / f"{name}_phases.npy"
+        all_phase_names.append(np.load(path, allow_pickle=True))
     return all_phase_names
 
 
@@ -239,7 +221,8 @@ def main():
     print("=" * 60)
 
     test_dino = load_dino_split("test")
-    phase_names_per_video = map_ood_phases(test_dino)
+    video_names = [name for name, _, _ in test_dino]
+    phase_names_per_video = load_phase_names("test", video_names)
 
     old_labels = np.concatenate([l for _, _, l in test_dino])
     phase_names = np.concatenate(phase_names_per_video)

@@ -96,14 +96,36 @@ def main(args):
         out_dir = output_dir / split
         out_dir.mkdir(parents=True, exist_ok=True)
 
-        # Skip if already extracted (allows resuming a crashed run)
-        if (out_dir / f"{video}.npy").exists():
-            pbar.write(f"  Skipping {video} — already extracted")
-            continue
-
         frame_keys_sorted = sorted(frame_keys, key=lambda k: _extract_frame_number(pathlib.Path(k)))
 
-        label_list, frame_paths_final = [], []
+        # Skip if already fully extracted (features + labels + phases)
+        if (out_dir / f"{video}.npy").exists():
+            if not (out_dir / f"{video}_phases.npy").exists():
+                # Backfill phase names for previously extracted videos
+                phase_name_list_bf = []
+                for k in frame_keys_sorted:
+                    phase = all_labels[k]
+                    if phase in exclude_classes:
+                        continue
+                    img_path = dataset_root / k
+                    if not img_path.exists():
+                        found = False
+                        for alt in ("train", "val", "test"):
+                            alt_path = dataset_root / alt / k.split("/", 1)[1]
+                            if alt_path.exists():
+                                found = True
+                                break
+                        if not found:
+                            continue
+                    phase_name_list_bf.append(phase)
+                np.save(out_dir / f"{video}_phases.npy",
+                        np.array(phase_name_list_bf, dtype=object))
+                pbar.write(f"  Backfilled phases for {video}")
+            else:
+                pbar.write(f"  Skipping {video} — already extracted")
+            continue
+
+        label_list, phase_name_list, frame_paths_final = [], [], []
         for k in frame_keys_sorted:
             phase = all_labels[k]
             if phase in exclude_classes:
@@ -120,6 +142,7 @@ def main(args):
                 if not found:
                     continue
             label_list.append(-1 if (phase in others_classes or phase not in class_to_idx) else class_to_idx[phase])
+            phase_name_list.append(phase)
             frame_paths_final.append(img_path)
 
         if not frame_paths_final:
@@ -146,6 +169,7 @@ def main(args):
 
         np.save(out_dir / f"{video}.npy",        features)
         np.save(out_dir / f"{video}_labels.npy", labels)
+        np.save(out_dir / f"{video}_phases.npy", np.array(phase_name_list, dtype=object))
 
     print(f"\nDone. Features saved to {output_dir}")
     for split in ["train", "val", "test"]:
