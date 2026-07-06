@@ -24,6 +24,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 from dataset.feature_dataset import instantiate_feature_loaders, VideoFeatureDataset
 from losses.mstcn_loss import MSTCNLoss
+from losses.temporal_clustering_loss import TemporalClusteringLoss
 from metrics.cataract_metrics import CataractMetrics
 from models import instantiate_model
 from utils.helpers import (
@@ -75,7 +76,7 @@ class TemporalTrainer:
         early_stopping_patience: int = 0,   # 0 = disabled
         train_crop_len: int = 0,            # 0 = full sequence ; >0 = random temporal crop
         mixup_alpha: float = 0.0,           # 0 = disabled ; 0.4 recommended
-        **_,  # absorb unknown config keys
+        **kwargs,  # absorb unknown config keys (tcl_beta, tcl_momentum, etc.)
     ):
         self.model       = model
         self.optimizer   = optimizer
@@ -95,6 +96,8 @@ class TemporalTrainer:
         self.early_stopping_patience  = early_stopping_patience
         self.train_crop_len           = train_crop_len
         self.mixup_alpha              = mixup_alpha
+        self.tcl_beta                 = kwargs.get("tcl_beta", 0.0)
+        self.tcl                      = None
         self._train_dataset           = None   # set in fit()
 
         pathlib.Path(log_dir).mkdir(exist_ok=True, parents=True)
@@ -123,8 +126,24 @@ class TemporalTrainer:
             features = features + torch.randn_like(features) * self.feature_noise_std
         labels = labels.to(self.device)
 
-        stage_logits = self.model(features, start_pos=start_pos, total_len=total_len)
+        if self.tcl is not None and hasattr(self.model, "forward_with_features"):
+            stage_logits, internal_feats = self.model.forward_with_features(features)
+            # internal_feats: (B, F, T) → (T, F)
+            internal_feats = internal_feats.squeeze(0).T
+        else:
+            stage_logits = self.model(features, start_pos=start_pos, total_len=total_len)
+            internal_feats = None
+
         total_loss, loss_dict = self.loss_fn(stage_logits, labels)
+
+        if self.tcl is not None and internal_feats is not None:
+            l_intra, l_inter = self.tcl(internal_feats, labels)
+            tcl_loss = self.tcl_beta * (l_intra + l_inter)
+            total_loss = total_loss + tcl_loss
+            loss_dict["tcl_intra"] = l_intra.detach()
+            loss_dict["tcl_inter"] = l_inter.detach()
+            loss_dict["tcl_total"] = tcl_loss.detach()
+
         return total_loss, loss_dict, stage_logits
 
     def _run_epoch(self, loader, epoch: int, tag: str):
@@ -291,6 +310,23 @@ def main(config: DictConfig):
     OmegaConf.save(config, pathlib.Path(log_dir).parent / "config.yaml")
 
     model = instantiate_model(config.model)
+
+    resume_ckpt = config.get("resume_ckpt", None)
+    if resume_ckpt:
+        state = torch.load(resume_ckpt, map_location="cpu", weights_only=False)
+        model.load_state_dict(state["model_state_dict"])
+        logger.info(f"Resumed from {resume_ckpt} (epoch {state.get('epoch', '?')})")
+
+    # Freeze all params except output_proj of the last refinement stage.
+    # This preserves the 64-dim feature space (shaped by TCL) and only
+    # re-trains the linear classification head.
+    if config.get("freeze_except_last_proj", False):
+        for p in model.parameters():
+            p.requires_grad = False
+        for p in model.refinement_stages[-1].output_proj.parameters():
+            p.requires_grad = True
+        logger.info("Frozen: all params except refinement_stages[-1].output_proj")
+
     logger.info(
         f"Model: {sum(p.numel() for p in model.parameters() if p.requires_grad):,} trainable params"
     )
@@ -334,6 +370,8 @@ def main(config: DictConfig):
 
     visualizer = TemporalVisualizer(img_dir=img_dir, class_names=class_names)
 
+    train_params = OmegaConf.to_container(config.train, resolve=True)
+
     trainer = TemporalTrainer(
         model=model,
         optimizer=optimizer,
@@ -343,8 +381,23 @@ def main(config: DictConfig):
         visualizer=visualizer,
         log_dir=log_dir,
         ckpt_dir=ckpt_dir,
-        **OmegaConf.to_container(config.train, resolve=True),
+        **train_params,
     )
+
+    tcl_beta = train_params.get("tcl_beta", 0.0)
+    if tcl_beta > 0:
+        feature_dim = config.model.get("num_f_maps", 64)
+        tcl_momentum = train_params.get("tcl_momentum", 0.9)
+        tcl_delta = train_params.get("tcl_delta", 1.0)
+        trainer.tcl = TemporalClusteringLoss(
+            num_classes=config.model.num_classes,
+            feature_dim=feature_dim,
+            momentum=tcl_momentum,
+            delta=tcl_delta,
+        ).to(trainer.device)
+        logger.info(f"TCL enabled: beta={tcl_beta}, feature_dim={feature_dim}, "
+                    f"momentum={tcl_momentum}, delta={tcl_delta}")
+
     trainer.fit(train_loader, val_loader)
 
 
@@ -354,5 +407,18 @@ if __name__ == "__main__":
         "--config", type=str,
         default="phases_recognition/configs/config_mstcn.yaml",
     )
+    parser.add_argument(
+        "--override", type=str, nargs="*", default=[],
+        help="Override config values, e.g. --override train.tcl_beta=0.01",
+    )
+    parser.add_argument(
+        "--resume", type=str, default=None,
+        help="Path to checkpoint to resume/fine-tune from",
+    )
     args = parser.parse_args()
-    main(OmegaConf.load(args.config))
+    config = OmegaConf.load(args.config)
+    if args.override:
+        config = OmegaConf.merge(config, OmegaConf.from_dotlist(args.override))
+    if args.resume:
+        config.resume_ckpt = args.resume
+    main(config)
