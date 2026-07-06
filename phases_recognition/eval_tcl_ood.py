@@ -23,7 +23,8 @@ from sklearn.covariance import LedoitWolf
 from sklearn.manifold import TSNE
 from sklearn.metrics import (average_precision_score, roc_auc_score,
                               f1_score, precision_score, recall_score,
-                              classification_report)
+                              classification_report, precision_recall_curve,
+                              roc_curve, auc)
 from sklearn.neighbors import NearestNeighbors
 from torch.utils.data import DataLoader
 
@@ -34,11 +35,13 @@ from models import instantiate_model
 # ── Config ─────────────────────────────────────────────────────────────────
 FEAT_ROOT = pathlib.Path("/home/helena/UCL_video_cataract/features_dino/")
 EXPERIMENTS = {
-    "Baseline": "/home/helena/experiments_cataract/mstcn_dino_v1_date=2026_06_11_17_02_41",
+    "Baseline": "/home/helena/experiments_cataract/baseline_detection_phases_unknown_mstcn_dino_v1_date=2026_06_11_17_02_41",
     "TCL β=0.01": "/home/helena/experiments_cataract/mstcn_dino_tcl_beta0.01_date=2026_06_29_13_50_35",
     "TCL β=0.02": "/home/helena/experiments_cataract/mstcn_dino_tcl_beta0.02_date=2026_06_29_16_32_06",
     "TCL β=0.05": "/home/helena/experiments_cataract/mstcn_dino_tcl_beta0.05_date=2026_06_29_16_44_54",
-    "TCL β=0.1": "/home/helena/experiments_cataract/mstcn_dino_tcl_v1_date=2026_06_26_18_42_27",
+    "TCL β=0.01+FT": "/home/helena/experiments_cataract/mstcn_dino_tcl_beta0.01_ft_date=2026_07_06_15_46_02",
+    "TCL β=0.02+FT": "/home/helena/experiments_cataract/mstcn_dino_tcl_beta0.02_ft_date=2026_07_06_15_47_59",
+    "TCL β=0.05+FT": "/home/helena/experiments_cataract/mstcn_dino_tcl_beta0.05_ft_date=2026_07_06_15_50_00",
 }
 OUT_DIR = pathlib.Path("/home/helena/experiments_cataract/tcl_ood_eval/")
 
@@ -267,6 +270,62 @@ def plot_tsne_comparison(feats_base, feats_tcl, labels, phases, out_dir):
     print(f"  Saved: {path}")
 
 
+def plot_pr_and_roc_curves(results, out_dir):
+    """PR curves and ROC curves for all methods, with p95 operating point marked."""
+    COLORS = plt.cm.tab10(np.linspace(0, 1, len(results)))
+
+    fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+    ax_pr, ax_roc = axes
+
+    for (label, res), color in zip(results.items(), COLORS):
+        scores = res["scores"]
+        gt = res["labels_binary"]
+        thr = res["threshold"]
+
+        # PR curve
+        prec, rec, thresholds_pr = precision_recall_curve(gt, scores)
+        ap = average_precision_score(gt, scores)
+        ax_pr.plot(rec, prec, color=color, lw=1.5, label=f"{label} (AP={ap:.3f})")
+        # Mark p95 operating point
+        op_prec = res["prec_unknown"]
+        op_rec = res["rec_unknown"]
+        ax_pr.scatter(op_rec, op_prec, color=color, s=60, zorder=5, marker="o")
+
+        # ROC curve
+        fpr, tpr, _ = roc_curve(gt, scores)
+        auroc = roc_auc_score(gt, scores)
+        ax_roc.plot(fpr, tpr, color=color, lw=1.5, label=f"{label} (AUC={auroc:.3f})")
+        # Mark p95 operating point: FPR = 1 - specificity at threshold
+        fp_at_thr = ((scores > thr) & (gt == 0)).sum()
+        tn_at_thr = ((scores <= thr) & (gt == 0)).sum()
+        fpr_op = fp_at_thr / max(fp_at_thr + tn_at_thr, 1)
+        tp_at_thr = ((scores > thr) & (gt == 1)).sum()
+        fn_at_thr = ((scores <= thr) & (gt == 1)).sum()
+        tpr_op = tp_at_thr / max(tp_at_thr + fn_at_thr, 1)
+        ax_roc.scatter(fpr_op, tpr_op, color=color, s=60, zorder=5, marker="o")
+
+    ax_pr.set_xlabel("Recall", fontsize=12)
+    ax_pr.set_ylabel("Precision", fontsize=12)
+    ax_pr.set_title("Precision-Recall curves (• = p95 threshold)", fontsize=13)
+    ax_pr.set_xlim(0, 1); ax_pr.set_ylim(0, 1.02)
+    ax_pr.legend(fontsize=7, loc="upper right")
+    ax_pr.grid(alpha=0.3)
+
+    ax_roc.plot([0, 1], [0, 1], "k--", lw=0.8)
+    ax_roc.set_xlabel("FPR", fontsize=12)
+    ax_roc.set_ylabel("TPR", fontsize=12)
+    ax_roc.set_title("ROC curves (• = p95 threshold)", fontsize=13)
+    ax_roc.set_xlim(0, 1); ax_roc.set_ylim(0, 1.02)
+    ax_roc.legend(fontsize=7, loc="lower right")
+    ax_roc.grid(alpha=0.3)
+
+    fig.tight_layout()
+    path = out_dir / "pr_roc_curves.png"
+    fig.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved: {path}")
+
+
 def plot_comparison_bars(results, out_dir):
     """Bar chart comparing recall per unknown phase: baseline vs TCL."""
     phases = [p for p in UNKNOWN_PHASES
@@ -409,6 +468,9 @@ def main():
 
             threshold = calibrate_threshold(val_scores, percentile=95)
             result = eval_f1(test_scores, te_l, te_p, threshold, label)
+            result["scores"] = test_scores
+            result["labels_binary"] = (te_l == -1).astype(np.int32)
+            result["threshold"] = threshold
             all_results[label] = result
 
     # ── Comparison table ──────────────────────────────────────────────────
@@ -421,21 +483,22 @@ def main():
         print(f"  {method:<25} {res['auroc']:>7.4f} {res['f1_known']:>7.4f} "
               f"{res['f1_unknown']:>7.4f} {res['prec_unknown']:>7.4f} {res['rec_unknown']:>7.4f}")
 
-    print(f"\n  Per-phase F1:")
-    print(f"  {'Method':<25}", end="")
-    for p in UNKNOWN_PHASES:
-        print(f" {p[:10]:>10}", end="")
-    print()
-    print(f"  {'-'*77}")
-    for method, res in all_results.items():
-        print(f"  {method:<25}", end="")
+    for metric, key in [("Per-phase F1", "f1"), ("Per-phase Precision", "precision"), ("Per-phase Recall", "recall")]:
+        print(f"\n  {metric}:")
+        print(f"  {'Method':<25}", end="")
         for p in UNKNOWN_PHASES:
-            pp = res["per_phase"].get(p)
-            if pp:
-                print(f" {pp['f1']:>10.4f}", end="")
-            else:
-                print(f" {'—':>10}", end="")
+            print(f" {p[:10]:>10}", end="")
         print()
+        print(f"  {'-'*77}")
+        for method, res in all_results.items():
+            print(f"  {method:<25}", end="")
+            for p in UNKNOWN_PHASES:
+                pp = res["per_phase"].get(p)
+                if pp:
+                    print(f" {pp[key]:>10.4f}", end="")
+                else:
+                    print(f" {'—':>10}", end="")
+            print()
 
     # ── Plots ─────────────────────────────────────────────────────────────
     print("\n" + "=" * 60)
@@ -594,6 +657,9 @@ def main():
     fig.savefig(path, dpi=150, bbox_inches="tight")
     plt.close(fig)
     print(f"Saved: {path}")
+
+    # ── Figure 5: PR curves + ROC curves for all OOD methods
+    plot_pr_and_roc_curves(all_results, OUT_DIR)
 
     print(f"\nAll figures saved to: {OUT_DIR}")
     print("Done.")

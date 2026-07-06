@@ -317,6 +317,16 @@ def main(config: DictConfig):
         model.load_state_dict(state["model_state_dict"])
         logger.info(f"Resumed from {resume_ckpt} (epoch {state.get('epoch', '?')})")
 
+    # Freeze all params except output_proj of the last refinement stage.
+    # This preserves the 64-dim feature space (shaped by TCL) and only
+    # re-trains the linear classification head.
+    if config.get("freeze_except_last_proj", False):
+        for p in model.parameters():
+            p.requires_grad = False
+        for p in model.refinement_stages[-1].output_proj.parameters():
+            p.requires_grad = True
+        logger.info("Frozen: all params except refinement_stages[-1].output_proj")
+
     logger.info(
         f"Model: {sum(p.numel() for p in model.parameters() if p.requires_grad):,} trainable params"
     )
