@@ -5,8 +5,6 @@ import torchvision.models as tv_models
 
 from .cataract_predictor import CataractPredictor
 from .mstcn import MSTCNPlusPlus, instantiate_mstcn
-from .e2e_model import E2ETemporalModel, instantiate_e2e_model
-from .asformer import ASFormer, instantiate_asformer
 from .lstm_tcn import TeCNO, instantiate_tecno
 from .temporal_transformer import DinoTemporalTransformer, instantiate_dino_transformer
 from .dual_stream import DualStream, instantiate_dual_stream
@@ -51,12 +49,6 @@ def instantiate_model(model_config: DictConfig | dict) -> nn.Module:
 
     if name == "mstcn":
         return instantiate_mstcn(model_config)
-
-    if name == "e2e":
-        return instantiate_e2e_model(model_config)
-
-    if name == "asformer":
-        return instantiate_asformer(model_config)
 
     if name == "tecno":
         return instantiate_tecno(model_config)
