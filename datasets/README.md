@@ -167,9 +167,40 @@ python datasets/sync_labels_from_files.py
 python datasets/sync_labels_from_files.py --video "Video 32 (cat144)"
 ```
 
-**`analyze_dataset.ipynb`** — exploration notebook, reads
-`analysis_data_Ayushi.xlsx` directly (`EXCEL_PATH` constant at the top) for
-grading/phase distribution analysis outside of the split scripts.
+**`analyze_dataset.ipynb`** — exploration notebook, reads `labels.json` and
+`analysis_data_Ayushi.xlsx` directly (`LABELS_JSON`/`DATASET_DIR`/`EXCEL_PATH`
+constants at the top) for dataset-wide analysis outside of the split
+scripts. What it gives you, section by section:
+
+1. **Load labels.json** — flattens it into a dataframe (`split`, `video`,
+   `filename`, raw phase) and reports total frame/video/phase counts.
+2. **Phase normalization** — applies the same `PHASE_MAP` used by the split
+   scripts and flags frames belonging to `EXCLUDE_CLASSES` (phases the
+   current model drops entirely, e.g. `Corneal_hydration`).
+3. **Grading from Excel** — maps each video number to its grading level via
+   `analysis_data_Ayushi.xlsx`.
+4. **Class structure (model view)** — recomputes `CLASS_NAMES` /
+   `OTHERS_CLASSES` / `EXCLUDE_CLASSES` exactly as defined in
+   `phases_recognition/configs/config.yaml`, and prints the frame count/%
+   per model class (kept classes + grouped `"Others"` + excluded).
+   **Keep this section's constants in sync with `config.yaml` by hand** — it
+   is a copy, not a shared import, so it silently goes stale if the training
+   config's class lists change and this cell isn't updated.
+5. **Split overview** — frames/videos/phases/gradings per split, and a
+   train/val/test balance table per model class with an alert for any class
+   missing from a split.
+6. **Phase distribution per split** — horizontal bar charts, one per split.
+7. **Class imbalance** — bar chart of frame counts per phase over the whole
+   dataset, saved to `dataset_temporal/class_imbalance.png`.
+8. **Grading distribution per split** — bar chart of video counts per
+   grading level, one per split.
+9. **Frames per video** — distribution of frames/video per split, useful to
+   spot unusually short or long videos.
+10. **Phase coverage per video** — heatmap of which phases are present in
+    which video, plus a list of phases entirely absent from `val`/`test`.
+11. **Duplicate frames + excluded-phase distribution** — re-detects the
+    same duplicate frames as `detect_alternating.py` (as a cross-check), and
+    plots the proportion of excluded-phase frames per split.
 
 ---
 
