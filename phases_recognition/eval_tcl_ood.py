@@ -42,6 +42,8 @@ EXPERIMENTS = {
     "TCL β=0.01+FT": "/home/helena/experiments_cataract/mstcn_dino_tcl_beta0.01_ft_date=2026_07_06_15_46_02",
     "TCL β=0.02+FT": "/home/helena/experiments_cataract/mstcn_dino_tcl_beta0.02_ft_date=2026_07_06_15_47_59",
     "TCL β=0.05+FT": "/home/helena/experiments_cataract/mstcn_dino_tcl_beta0.05_ft_date=2026_07_06_15_50_00",
+    "Baseline+Mixup": "/home/helena/experiments_cataract/baseline_mstcn_dino_mixup_date=2026_07_22_16_17_18",
+    "TCL β=0.02+Mixup": "/home/helena/experiments_cataract/mstcn_dino_tcl_beta0.02_mixup_date=2026_07_22_16_32_18",
 }
 OUT_DIR = pathlib.Path("/home/helena/experiments_cataract/tcl_ood_eval/")
 

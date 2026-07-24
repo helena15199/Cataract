@@ -1,10 +1,12 @@
-"""Per-video timeline: GT / predictions / OOD scores (Baseline vs TCL β=0.02).
+"""Per-video timeline: GT / predictions / OOD scores (Baseline vs TCL β=0.02 vs TCL+Mixup).
 
-For each test video, plots 4 subplots:
+For each test video, plots 6 subplots:
   1. Ground truth (colored bars by phase)
-  2. Closed-set prediction — TCL β=0.02 (same palette)
-  3. OOD score — Baseline KNN (curve + threshold)
-  4. OOD score — TCL β=0.02 KNN (curve + threshold)
+  2. OOD-masked prediction — TCL β=0.02
+  3. OOD-masked prediction — TCL β=0.02+Mixup
+  4. OOD score — Baseline KNN (curve + threshold)
+  5. OOD score — TCL β=0.02 KNN (curve + threshold)
+  6. OOD score — TCL β=0.02+Mixup KNN (curve + threshold)
 Unknown GT segments are highlighted in transparent red on all subplots.
 
 Usage:
@@ -30,9 +32,10 @@ from dataset.feature_dataset import VideoFeatureDataset, _collate_single_video
 from models import instantiate_model
 
 # ── Config ─────────────────────────────────────────────────────────────────
-FEAT_ROOT = pathlib.Path("/home/helena/UCL_video_cataract/features_dino/")
+FEAT_ROOT    = pathlib.Path("/home/helena/UCL_video_cataract/features_dino/")
 EXP_BASELINE = "/home/helena/experiments_cataract/baseline_detection_phases_unknown_mstcn_dino_v1_date=2026_06_11_17_02_41"
 EXP_TCL      = "/home/helena/experiments_cataract/mstcn_dino_tcl_beta0.02_date=2026_06_29_16_32_06"
+EXP_MIXUP    = "/home/helena/experiments_cataract/mstcn_dino_tcl_beta0.02_mixup_date=2026_07_22_16_32_18"
 OUT_DIR      = pathlib.Path("/home/helena/experiments_cataract/tcl_timeline_eval/")
 KNN_K = 10
 MIN_DURATION = 30   # min consecutive frames above threshold to count as a predicted segment
@@ -173,10 +176,14 @@ def make_legend(fig):
                bbox_to_anchor=(0.5, -0.04))
 
 
-def plot_video(video_name, gt_labels, gt_phases, tcl_preds,
-               scores_base, thr_base, scores_tcl, thr_tcl, out_dir):
-    fig, axes = plt.subplots(4, 1, figsize=(18, 7), sharex=True,
-                             gridspec_kw={"height_ratios": [1, 1, 2, 2],
+def plot_video(video_name, gt_labels, gt_phases,
+               tcl_preds, mixup_preds,
+               scores_base, thr_base,
+               scores_tcl, thr_tcl,
+               scores_mixup, thr_mixup,
+               out_dir):
+    fig, axes = plt.subplots(6, 1, figsize=(18, 10), sharex=True,
+                             gridspec_kw={"height_ratios": [1, 1, 1, 2, 2, 2],
                                           "hspace": 0.35})
 
     T = len(gt_labels)
@@ -185,19 +192,29 @@ def plot_video(video_name, gt_labels, gt_phases, tcl_preds,
     plot_phase_bar(axes[0], gt_labels, gt_phases, "GT")
     shade_unknown_regions(axes[0], gt_labels, gt_phases, 0, 1)
 
-    # ── Subplot 2: TCL β=0.02 closed-set predictions ─────────────────────
-    plot_phase_bar(axes[1], tcl_preds, gt_phases, "Pred\nTCL")
+    # ── Subplot 2: TCL β=0.02 OOD-masked predictions ─────────────────────
+    eff_preds_tcl = np.where(scores_tcl > thr_tcl, -1, tcl_preds)
+    plot_phase_bar(axes[1], eff_preds_tcl, gt_phases, "Pred\nTCL")
     shade_unknown_regions(axes[1], gt_labels, gt_phases, 0, 1)
 
-    # ── Subplot 3: Baseline OOD score ────────────────────────────────────
-    plot_score_curve(axes[2], scores_base, thr_base, "OOD\nBaseline", "#1f77b4")
+    # ── Subplot 3: TCL β=0.02+Mixup OOD-masked predictions ───────────────
+    eff_preds_mixup = np.where(scores_mixup > thr_mixup, -1, mixup_preds)
+    plot_phase_bar(axes[2], eff_preds_mixup, gt_phases, "Pred\nTCL+Mixup")
     shade_unknown_regions(axes[2], gt_labels, gt_phases, 0, 1)
 
-    # ── Subplot 4: TCL β=0.02 OOD score ──────────────────────────────────
-    plot_score_curve(axes[3], scores_tcl, thr_tcl, "OOD\nTCL β=0.02", "#d62728")
+    # ── Subplot 4: Baseline OOD score ────────────────────────────────────
+    plot_score_curve(axes[3], scores_base, thr_base, "OOD\nBaseline", "#1f77b4")
     shade_unknown_regions(axes[3], gt_labels, gt_phases, 0, 1)
 
-    axes[3].set_xlabel("Frame", fontsize=9)
+    # ── Subplot 5: TCL β=0.02 OOD score ──────────────────────────────────
+    plot_score_curve(axes[4], scores_tcl, thr_tcl, "OOD\nTCL β=0.02", "#d62728")
+    shade_unknown_regions(axes[4], gt_labels, gt_phases, 0, 1)
+
+    # ── Subplot 6: TCL β=0.02+Mixup OOD score ────────────────────────────
+    plot_score_curve(axes[5], scores_mixup, thr_mixup, "OOD\nTCL+Mixup", "#2ca02c")
+    shade_unknown_regions(axes[5], gt_labels, gt_phases, 0, 1)
+
+    axes[5].set_xlabel("Frame", fontsize=9)
 
     # Count unknown phases in this video
     unk_phases_in_video = sorted(set(gt_phases[gt_labels == -1]) - {""})
@@ -332,7 +349,7 @@ def compute_segment_metrics(all_video_results, threshold, model_label):
     return results
 
 
-def plot_metrics_tables(base_res, tcl_res, out_dir):
+def plot_metrics_tables(base_res, tcl_res, out_dir, suffix="", label_b="TCL β=0.02"):
     """Save segment metrics as PNG tables (event recall + F1@IoU)."""
     IOU_THRESHOLDS = [0.10, 0.25, 0.50]
     phases = UNKNOWN_PHASES
@@ -340,7 +357,7 @@ def plot_metrics_tables(base_res, tcl_res, out_dir):
     # ── Table 1: Event recall ────────────────────────────────────────────
     header = ["Phase", "GT segs",
               "Baseline\nDetected", "Baseline\nRecall",
-              "TCL β=0.02\nDetected", "TCL β=0.02\nRecall"]
+              f"{label_b}\nDetected", f"{label_b}\nRecall"]
     rows = []
     for ph in phases:
         tot  = base_res["event_tot"].get(ph, 0)
@@ -359,7 +376,6 @@ def plot_metrics_tables(base_res, tcl_res, out_dir):
     for j in range(len(header)):
         tbl[0, j].set_text_props(fontweight="bold")
         tbl[0, j].set_facecolor("#dce6f1")
-    # Highlight best recall per row
     for i, row in enumerate(rows, start=1):
         b_rec, t_rec = float(row[3]), float(row[5])
         col = 5 if t_rec >= b_rec else 3
@@ -367,10 +383,10 @@ def plot_metrics_tables(base_res, tcl_res, out_dir):
     fp_b = base_res["fp_total"]
     fp_t = tcl_res["fp_total"]
     ax.set_title(f"Event-level detection (any IoU > 0, min_duration={MIN_DURATION} frames)\n"
-                 f"False alarm segments — Baseline: {fp_b}  |  TCL β=0.02: {fp_t}",
+                 f"False alarm segments — Baseline: {fp_b}  |  {label_b}: {fp_t}",
                  fontsize=11, pad=14)
     fig.tight_layout()
-    path = out_dir / "segment_event_recall.png"
+    path = out_dir / f"segment_event_recall{suffix}.png"
     fig.savefig(path, dpi=150, bbox_inches="tight")
     plt.close(fig)
 
@@ -378,7 +394,7 @@ def plot_metrics_tables(base_res, tcl_res, out_dir):
     for k in IOU_THRESHOLDS:
         header = ["Phase",
                   "Baseline F1", "Baseline Prec", "Baseline Rec",
-                  "TCL β=0.02 F1", "TCL β=0.02 Prec", "TCL β=0.02 Rec",
+                  f"{label_b} F1", f"{label_b} Prec", f"{label_b} Rec",
                   "#GT segs"]
         rows = []
         key = f"f1@{k}"
@@ -407,12 +423,12 @@ def plot_metrics_tables(base_res, tcl_res, out_dir):
         ax.set_title(f"F1 @ IoU ≥ {k:.2f}  (min_duration={MIN_DURATION} frames)",
                      fontsize=11, pad=14)
         fig.tight_layout()
-        path = out_dir / f"segment_f1_iou{int(k*100)}.png"
+        path = out_dir / f"segment_f1_iou{int(k*100)}{suffix}.png"
         fig.savefig(path, dpi=150, bbox_inches="tight")
         plt.close(fig)
 
 
-def plot_segment_metrics(base_results, tcl_results, out_dir):
+def plot_segment_metrics(base_results, tcl_results, out_dir, suffix="", label_b="TCL β=0.02"):
     """Bar chart: event recall per phase — Baseline vs TCL."""
     base_tp, base_tot = base_results["event_tp"], base_results["event_tot"]
     tcl_tp,  tcl_tot  = tcl_results["event_tp"],  tcl_results["event_tot"]
@@ -427,7 +443,7 @@ def plot_segment_metrics(base_results, tcl_results, out_dir):
 
     bars1 = ax.bar(x - w/2, base_rec, w, label="Baseline", color="#1f77b4",
                    edgecolor="black", lw=0.4)
-    bars2 = ax.bar(x + w/2, tcl_rec,  w, label="TCL β=0.02", color="#d62728",
+    bars2 = ax.bar(x + w/2, tcl_rec,  w, label=label_b, color="#d62728",
                    edgecolor="black", lw=0.4)
     for bars, vals in [(bars1, base_rec), (bars2, tcl_rec)]:
         for bar, v in zip(bars, vals):
@@ -438,16 +454,15 @@ def plot_segment_metrics(base_results, tcl_results, out_dir):
     ax.set_xticks(x)
     ax.set_xticklabels([p.replace("_", "\n") for p in phases], fontsize=9)
     ax.set_ylabel("Event recall", fontsize=12)
-    ax.set_title(f"Segment detection recall — Baseline vs TCL β=0.02\n"
+    ax.set_title(f"Segment detection recall — Baseline vs {label_b}\n"
                  f"(min_duration={MIN_DURATION} frames, any IoU > 0)", fontsize=13)
     ax.set_ylim(0, 1.15)
     ax.legend(fontsize=10)
     ax.grid(axis="y", alpha=0.3)
     fig.tight_layout()
-    path = out_dir / "segment_event_recall.png"
+    path = out_dir / f"segment_event_recall{suffix}.png"
     fig.savefig(path, dpi=150, bbox_inches="tight")
     plt.close(fig)
-    print(f"Saved: {path}")
 
 
 def compute_false_alarms_and_delay(all_video_results, threshold, video_names):
@@ -486,13 +501,14 @@ def compute_false_alarms_and_delay(all_video_results, threshold, video_names):
     return fa_rows, delay_rows
 
 
-def plot_false_alarms(fa_rows_base, fa_rows_tcl, out_dir):
+def plot_false_alarms(fa_rows_base, fa_rows_tcl, out_dir,
+                      suffix="", label_b="TCL β=0.02 KNN"):
     """PNG table: false alarms per video (routine vs complicated)."""
     all_names = sorted(set(r[0] for r in fa_rows_base + fa_rows_tcl))
     base_map  = {r[0]: r for r in fa_rows_base}
     tcl_map   = {r[0]: r for r in fa_rows_tcl}
 
-    header = ["Video", "Category", "Baseline FA", "TCL β=0.02 FA"]
+    header = ["Video", "Category", "Baseline FA", f"{label_b} FA"]
     rows = []
     for name in all_names:
         cat  = base_map[name][1] if name in base_map else tcl_map[name][1]
@@ -520,12 +536,13 @@ def plot_false_alarms(fa_rows_base, fa_rows_tcl, out_dir):
                  "Yellow = clinically complex (anomalies possibly unlabelled)",
                  fontsize=11, pad=14)
     fig.tight_layout()
-    path = out_dir / "false_alarms_per_video.png"
+    path = out_dir / f"false_alarms_per_video{suffix}.png"
     fig.savefig(path, dpi=150, bbox_inches="tight")
     plt.close(fig)
 
 
-def plot_detection_delay(delay_rows_base, delay_rows_tcl, out_dir):
+def plot_detection_delay(delay_rows_base, delay_rows_tcl, out_dir,
+                         suffix="", label_b="TCL β=0.02 KNN"):
     """PNG table: mean detection delay per phase."""
     from collections import defaultdict
     def aggregate(rows):
@@ -539,7 +556,7 @@ def plot_detection_delay(delay_rows_base, delay_rows_tcl, out_dir):
     phases  = [p for p in UNKNOWN_PHASES if p in base_d or p in tcl_d]
 
     header = ["Phase", "Baseline\nmean delay (frames)", "Baseline\ndetections",
-              "TCL β=0.02\nmean delay (frames)", "TCL β=0.02\ndetections"]
+              f"{label_b}\nmean delay (frames)", f"{label_b}\ndetections"]
     rows = []
     for ph in phases:
         bd = base_d.get(ph, [])
@@ -564,7 +581,7 @@ def plot_detection_delay(delay_rows_base, delay_rows_tcl, out_dir):
                  "(only detected segments counted; — = none detected)",
                  fontsize=11, pad=14)
     fig.tight_layout()
-    path = out_dir / "detection_delay.png"
+    path = out_dir / f"detection_delay{suffix}.png"
     fig.savefig(path, dpi=150, bbox_inches="tight")
     plt.close(fig)
 
@@ -576,38 +593,48 @@ def main():
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
     print("Loading models...")
-    model_base = load_model(EXP_BASELINE, device)
-    model_tcl  = load_model(EXP_TCL, device)
+    model_base  = load_model(EXP_BASELINE, device)
+    model_tcl   = load_model(EXP_TCL, device)
+    model_mixup = load_model(EXP_MIXUP, device)
 
-    print("Extracting features (train / val / test) for both models...")
-    train_base = extract_per_video(model_base, "train", device)
-    val_base   = extract_per_video(model_base, "val", device)
-    test_base  = extract_per_video(model_base, "test", device)
+    print("Extracting features (train / val / test) for all models...")
+    train_base = extract_per_video(model_base,  "train", device)
+    val_base   = extract_per_video(model_base,  "val",   device)
+    test_base  = extract_per_video(model_base,  "test",  device)
 
-    train_tcl  = extract_per_video(model_tcl, "train", device)
-    val_tcl    = extract_per_video(model_tcl, "val", device)
-    test_tcl   = extract_per_video(model_tcl, "test", device)
+    train_tcl  = extract_per_video(model_tcl,   "train", device)
+    val_tcl    = extract_per_video(model_tcl,   "val",   device)
+    test_tcl   = extract_per_video(model_tcl,   "test",  device)
 
-    del model_base, model_tcl
+    train_mix  = extract_per_video(model_mixup, "train", device)
+    val_mix    = extract_per_video(model_mixup, "val",   device)
+    test_mix   = extract_per_video(model_mixup, "test",  device)
+
+    del model_base, model_tcl, model_mixup
     torch.cuda.empty_cache()
 
     print("Fitting KNN...")
-    nn_base = fit_knn(train_base)
-    nn_tcl  = fit_knn(train_tcl)
+    nn_base  = fit_knn(train_base)
+    nn_tcl   = fit_knn(train_tcl)
+    nn_mixup = fit_knn(train_mix)
 
     print("Calibrating thresholds (p95 val)...")
-    thr_base = get_threshold(nn_base, val_base)
-    thr_tcl  = get_threshold(nn_tcl, val_tcl)
-    print(f"  Baseline threshold: {thr_base:.4f}")
-    print(f"  TCL β=0.02 threshold: {thr_tcl:.4f}")
+    thr_base  = get_threshold(nn_base,  val_base)
+    thr_tcl   = get_threshold(nn_tcl,   val_tcl)
+    thr_mixup = get_threshold(nn_mixup, val_mix)
+    print(f"  Baseline threshold:      {thr_base:.4f}")
+    print(f"  TCL β=0.02 threshold:    {thr_tcl:.4f}")
+    print(f"  TCL+Mixup threshold:     {thr_mixup:.4f}")
 
     print(f"\nGenerating timelines for {len(test_base)} test videos...")
 
-    # Build index: test_tcl by video name for alignment
-    tcl_by_name = {name: (feats, preds, labels, phases)
-                   for name, feats, preds, labels, phases in test_tcl}
+    # Build index by video name for alignment
+    tcl_by_name   = {name: (feats, preds, labels, phases)
+                     for name, feats, preds, labels, phases in test_tcl}
+    mixup_by_name = {name: (feats, preds, labels, phases)
+                     for name, feats, preds, labels, phases in test_mix}
 
-    video_results_base, video_results_tcl = [], []
+    video_results_base, video_results_tcl, video_results_mixup = [], [], []
     video_names_list = []
 
     for name, feats_b, preds_b, labels, phases in test_base:
@@ -617,31 +644,50 @@ def main():
 
         scores_b = nn_base.kneighbors(feats_b)[0][:, -1]
 
-        feats_t, preds_t, _, _ = tcl_by_name[name]
+        feats_t, preds_t, _, _   = tcl_by_name[name]
         scores_t = nn_tcl.kneighbors(feats_t)[0][:, -1]
 
-        plot_video(name, labels, phases, preds_t,
-                   scores_b, thr_base, scores_t, thr_tcl, OUT_DIR)
+        feats_m, preds_m, _, _   = mixup_by_name[name]
+        scores_m = nn_mixup.kneighbors(feats_m)[0][:, -1]
+
+        plot_video(name, labels, phases,
+                   preds_t, preds_m,
+                   scores_b, thr_base,
+                   scores_t, thr_tcl,
+                   scores_m, thr_mixup,
+                   OUT_DIR)
 
         video_results_base.append((scores_b, labels, phases))
         video_results_tcl.append((scores_t, labels, phases))
+        video_results_mixup.append((scores_m, labels, phases))
         video_names_list.append(name)
 
     print(f"\nAll timelines saved to: {OUT_DIR}")
 
     # ── Segment-level metrics ─────────────────────────────────────────────
-    base_res = compute_segment_metrics(video_results_base, thr_base, "Baseline KNN")
-    tcl_res  = compute_segment_metrics(video_results_tcl,  thr_tcl,  "TCL β=0.02 KNN")
+    base_res  = compute_segment_metrics(video_results_base,  thr_base,  "Baseline KNN")
+    tcl_res   = compute_segment_metrics(video_results_tcl,   thr_tcl,   "TCL β=0.02 KNN")
+    mixup_res = compute_segment_metrics(video_results_mixup, thr_mixup, "TCL+Mixup KNN")
     plot_metrics_tables(base_res, tcl_res, OUT_DIR)
     plot_segment_metrics(base_res, tcl_res, OUT_DIR)
+    plot_metrics_tables(base_res, mixup_res,
+                        OUT_DIR, suffix="_vs_mixup")
+    plot_segment_metrics(base_res, mixup_res,
+                         OUT_DIR, suffix="_vs_mixup")
 
     # ── False alarms and detection delay ─────────────────────────────────
-    fa_rows_base, delay_rows_base = compute_false_alarms_and_delay(
-        video_results_base, thr_base, video_names_list)
-    fa_rows_tcl, delay_rows_tcl = compute_false_alarms_and_delay(
-        video_results_tcl, thr_tcl, video_names_list)
-    plot_false_alarms(fa_rows_base, fa_rows_tcl, OUT_DIR)
-    plot_detection_delay(delay_rows_base, delay_rows_tcl, OUT_DIR)
+    fa_rows_base,  delay_rows_base  = compute_false_alarms_and_delay(
+        video_results_base,  thr_base,  video_names_list)
+    fa_rows_tcl,   delay_rows_tcl   = compute_false_alarms_and_delay(
+        video_results_tcl,   thr_tcl,   video_names_list)
+    fa_rows_mixup, delay_rows_mixup = compute_false_alarms_and_delay(
+        video_results_mixup, thr_mixup, video_names_list)
+    plot_false_alarms(fa_rows_base, fa_rows_tcl,   OUT_DIR)
+    plot_false_alarms(fa_rows_base, fa_rows_mixup, OUT_DIR,
+                      suffix="_vs_mixup", label_b="TCL+Mixup KNN")
+    plot_detection_delay(delay_rows_base, delay_rows_tcl,   OUT_DIR)
+    plot_detection_delay(delay_rows_base, delay_rows_mixup, OUT_DIR,
+                         suffix="_vs_mixup", label_b="TCL+Mixup KNN")
 
 
 if __name__ == "__main__":

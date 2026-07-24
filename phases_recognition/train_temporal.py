@@ -116,10 +116,12 @@ class TemporalTrainer:
 
     def _run_step(
         self,
-        features:  torch.Tensor,  # (T, D)
-        labels:    torch.Tensor,  # (T,)
-        start_pos: int = 0,
-        total_len: int = 0,
+        features:   torch.Tensor,        # (T, D)
+        labels:     torch.Tensor,        # (T,)
+        start_pos:  int = 0,
+        total_len:  int = 0,
+        labels_b:   torch.Tensor | None = None,  # soft-label mixup: second label set
+        mixup_lam:  float = 1.0,                 # λ weighting labels vs labels_b
     ) -> tuple[torch.Tensor, dict, list[torch.Tensor]]:
         features = features.unsqueeze(0).to(self.device)  # (1, T, D)
         if self.feature_noise_std > 0 and self.model.training:
@@ -134,10 +136,19 @@ class TemporalTrainer:
             stage_logits = self.model(features, start_pos=start_pos, total_len=total_len)
             internal_feats = None
 
-        total_loss, loss_dict = self.loss_fn(stage_logits, labels)
+        # Soft-label Mixup: L = λ·CE(logits, yA) + (1-λ)·CE(logits, yB)
+        if labels_b is not None and mixup_lam < 1.0:
+            labels_b = labels_b.to(self.device)
+            loss_a, loss_dict = self.loss_fn(stage_logits, labels)
+            loss_b, _         = self.loss_fn(stage_logits, labels_b)
+            total_loss = mixup_lam * loss_a + (1.0 - mixup_lam) * loss_b
+        else:
+            total_loss, loss_dict = self.loss_fn(stage_logits, labels)
 
         if self.tcl is not None and internal_feats is not None:
-            l_intra, l_inter = self.tcl(internal_feats, labels)
+            # TCL uses dominant labels to keep cluster assignments unambiguous
+            tcl_labels = labels if mixup_lam >= 0.5 else labels_b.to(self.device)
+            l_intra, l_inter = self.tcl(internal_feats, tcl_labels)
             tcl_loss = self.tcl_beta * (l_intra + l_inter)
             total_loss = total_loss + tcl_loss
             loss_dict["tcl_intra"] = l_intra.detach()
@@ -157,34 +168,37 @@ class TemporalTrainer:
 
         for i, (features, labels, video_name) in pbar:
             # Mixup : interpoler avec une autre vidéo aléatoire par position relative
+            labels_b_mix, mixup_lam = None, 1.0
             if is_train and self.mixup_alpha > 0 and self._train_dataset is not None:
-                lam = float(torch.distributions.Beta(
+                mixup_lam = float(torch.distributions.Beta(
                     torch.tensor(self.mixup_alpha),
                     torch.tensor(self.mixup_alpha),
                 ).sample())
                 mix_idx = torch.randint(len(self._train_dataset), (1,)).item()
-                feat_b, labels_b, _ = self._train_dataset[mix_idx]
+                feat_b, labels_b_raw, _ = self._train_dataset[mix_idx]
                 T_a, T_b = features.shape[0], feat_b.shape[0]
                 # aligner feat_b sur la longueur de feat_a par position relative (t/T)
                 idx_b = (torch.linspace(0, 1, T_a) * (T_b - 1)).long().clamp(0, T_b - 1)
-                feat_b_aligned   = feat_b[idx_b]
-                labels_b_aligned = labels_b[idx_b]
-                features = lam * features + (1.0 - lam) * feat_b_aligned
-                # labels : garder ceux de la vidéo dominante
-                labels = labels if lam >= 0.5 else labels_b_aligned
+                feat_b_aligned = feat_b[idx_b]
+                labels_b_mix   = labels_b_raw[idx_b]
+                # interpolation des features ; les labels restent séparés (soft via loss)
+                features = mixup_lam * features + (1.0 - mixup_lam) * feat_b_aligned
 
             # Temporal crop : avant tout le reste pour que labels soit cohérent avec logits
             total_len = features.shape[0]
             start_pos = 0
             if is_train and self.train_crop_len > 0 and total_len > self.train_crop_len:
                 start_pos = torch.randint(0, total_len - self.train_crop_len, (1,)).item()
-                features  = features[start_pos : start_pos + self.train_crop_len]
-                labels    = labels  [start_pos : start_pos + self.train_crop_len]
+                features  = features [start_pos : start_pos + self.train_crop_len]
+                labels    = labels   [start_pos : start_pos + self.train_crop_len]
+                if labels_b_mix is not None:
+                    labels_b_mix = labels_b_mix[start_pos : start_pos + self.train_crop_len]
 
             if is_train:
                 self.optimizer.zero_grad(set_to_none=True)
                 total_loss, loss_dict, stage_logits = self._run_step(
-                    features, labels, start_pos=start_pos, total_len=total_len
+                    features, labels, start_pos=start_pos, total_len=total_len,
+                    labels_b=labels_b_mix, mixup_lam=mixup_lam,
                 )
                 if torch.isnan(total_loss):
                     logger.error(f"NaN loss on {video_name}, skipping.")
